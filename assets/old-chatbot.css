@@ -1,0 +1,414 @@
+/* ─── Variables ──────────────────────────────────────────────────── */
+:root {
+  --vsc-primary: #720971;
+  --vsc-primary-dark: #580758;
+  --vsc-primary-light: #f7edf7;
+  --vsc-primary-alpha: rgba(114,9,113,0.15);
+}
+
+/* ─── App shell ──────────────────────────────────────────────────── */
+#vsc-app {
+  display: flex;
+  flex-direction: column;
+  max-width: 980px;
+  margin: 0 auto;
+  height: 84vh;
+  min-height: 520px;
+  border: 1px solid #e2e2e2;
+  border-radius: 16px;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(114,9,113,0.1);
+}
+
+/* ─── Message list ───────────────────────────────────────────────── */
+#vsc-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 20px;
+  background: #f9f4f9;
+  scroll-behavior: smooth;
+}
+
+.vsc-msg {
+  margin-bottom: 16px;
+  max-width: 88%;
+  line-height: 1.55;
+  font-size: 14px;
+  animation: vsc-fadein 0.25s ease both;
+}
+@keyframes vsc-fadein {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.vsc-msg p  { margin: 0 0 6px; }
+.vsc-msg em { font-style: italic; color: #666; }
+.vsc-msg strong { font-weight: 600; color: var(--vsc-primary); }
+
+.vsc-msg-user {
+  margin-left: auto;
+  background: var(--vsc-primary);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.vsc-msg-bot {
+  background: #fff;
+  border: 1px solid #e8e0e8;
+  padding: 14px 16px;
+  border-radius: 18px 18px 18px 4px;
+  color: #1a1a1a;
+  box-shadow: 0 1px 4px rgba(114,9,113,0.06);
+}
+
+/* ─── Thinking bubble ────────────────────────────────────────────── */
+.vsc-thinking-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  color: #666;
+  font-size: 13px;
+}
+.vsc-dots {
+  display: flex;
+  gap: 4px;
+}
+.vsc-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vsc-primary);
+  animation: vsc-bounce 1.2s ease-in-out infinite;
+}
+.vsc-dots span:nth-child(2) { animation-delay: 0.2s; }
+.vsc-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes vsc-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.35; }
+  40%            { transform: scale(1);   opacity: 1; }
+}
+
+/* ─── Results grid ───────────────────────────────────────────────── */
+.vsc-results {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+
+/* ─── Video card ─────────────────────────────────────────────────── */
+.vsc-result {
+  border: 1px solid #e8e0e8;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  animation: vsc-fadein 0.35s ease both;
+}
+.vsc-result:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px var(--vsc-primary-alpha);
+}
+
+.vsc-thumb-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 14;
+  background: #1a001a;
+  overflow: hidden;
+}
+.vsc-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s ease;
+}
+.vsc-result:hover .vsc-thumb { transform: scale(1.04); }
+
+.vsc-play-btn {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  color: #fff;
+  background: rgba(114,9,113,0.35);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.vsc-result:hover .vsc-play-btn { opacity: 1; }
+
+.vsc-score-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--vsc-primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 20px;
+}
+
+.vsc-result-info { padding: 9px 11px 11px; }
+.vsc-result-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111;
+  margin-bottom: 3px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vsc-result-excerpt {
+  font-size: 11px;
+  color: #888;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── Status bar ─────────────────────────────────────────────────── */
+#vsc-status {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  padding: 4px 0;
+  min-height: 16px;
+}
+
+/* ─── Input row ──────────────────────────────────────────────────── */
+#vsc-input-row {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid #ece4ec;
+  background: #fff;
+  gap: 8px;
+}
+#vsc-input {
+  flex: 1;
+  padding: 12px 18px;
+  border: 1.5px solid #ddd;
+  border-radius: 24px;
+  outline: none;
+  font-size: 14px;
+  background: #f9f4f9;
+  transition: border-color 0.2s, background 0.2s;
+  min-width: 0;
+}
+#vsc-input:focus {
+  border-color: var(--vsc-primary);
+  background: #fff;
+}
+#vsc-send {
+  flex-shrink: 0;
+  padding: 0 20px;
+  height: 44px;
+  background: var(--vsc-primary)!important;
+  color: #fff;
+  border: none;
+  border-radius: 24px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.2s, transform 0.1s;
+  min-width: 80px;
+}
+#vsc-send:hover  { background: var(--vsc-primary-dark); }
+#vsc-send:active { transform: scale(0.97); }
+
+#vsc-send .vsc-send-icon  { display: none; }
+#vsc-send .vsc-send-label { display: inline; }
+
+/* ─── Modal overlay ──────────────────────────────────────────────── */
+#vsc-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0,0,0,0.82);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+#vsc-modal.vsc-modal-open { display: flex; }
+
+#vsc-modal-close {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 100001;
+  background: rgba(255,255,255,0.15);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+#vsc-modal-close:hover {
+  background: rgba(255,255,255,0.28);
+  transform: scale(1.1);
+}
+
+#vsc-modal-box {
+  position: relative;
+  background: #000;
+  border-radius: 14px;
+  overflow: hidden;
+  width: min(360px, 92vw);
+  max-height: 88vh;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.7);
+  display: flex;
+  flex-direction: column;
+  animation: vsc-modal-in 0.22s cubic-bezier(0.34,1.26,0.64,1) both;
+}
+@keyframes vsc-modal-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+#vsc-modal-player {
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  background: #000;
+  position: relative;
+}
+#vsc-modal-player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+#vsc-modal-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ddd;
+  background: #111;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── Modal controls overlay ─────────────────────────────────────── */
+#vsc-modal-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 14px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.7));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+@media (hover: hover) {
+  #vsc-modal-controls {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (hover: none) {
+  #vsc-modal-controls.vsc-controls-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+#vsc-ctrl-play,
+#vsc-ctrl-fs {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+}
+#vsc-ctrl-play:hover,
+#vsc-ctrl-fs:hover { color: #e8b4e8; }
+
+#vsc-ctrl-progress {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+  cursor: pointer;
+}
+#vsc-ctrl-bar {
+  width: 0%;
+  height: 100%;
+  background: var(--vsc-primary);
+  border-radius: 2px;
+  transition: width 0.5s linear;
+}
+
+/* ─── Responsive / Mobile ────────────────────────────────────────── */
+@media (max-width: 640px) {
+  #vsc-app {
+    height: 92vh;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+  #vsc-messages { padding: 16px 12px; }
+
+  .vsc-results { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+  #vsc-send {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 18px;
+  }
+  #vsc-send .vsc-send-label { display: none; }
+  #vsc-send .vsc-send-icon  { display: inline; }
+
+  #vsc-modal { padding: 0; }
+  #vsc-modal-box {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  #vsc-modal-close {
+    top: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .vsc-results { grid-template-columns: 1fr; }
+}
