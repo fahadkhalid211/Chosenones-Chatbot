@@ -350,6 +350,25 @@
   color: #8a5300;
   border-color: #fae0b5;
 }
+.vsc-banner-warning .vsc-timer-display {
+  color: #8a5300;
+  background: rgba(138, 83, 0, 0.12);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+}
+.vsc-reset-exact {
+  font-size: 11.5px;
+  opacity: 0.85;
+  font-weight: 500;
+  margin-left: 2px;
+}
+.vsc-timer-display {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
 .vsc-banner-guest {
   background: #f4f6fb;
   color: #2c4778;
@@ -517,6 +536,57 @@
   color: #1a1a1a;
   line-height: 1.3;
 }
+
+/* ─── Modal Timer Widget ─────────────────────────────────────────── */
+.vsc-modal-timer-box {
+  background: #fdf6fd;
+  border: 1px solid #ebd4eb;
+  border-radius: 14px;
+  padding: 13px 18px;
+  margin: 12px 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  box-shadow: 0 2px 8px rgba(114, 9, 113, 0.05);
+}
+.vsc-timer-icon-wrap {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #f3e1f3;
+  color: var(--vsc-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.vsc-timer-info {
+  flex: 1;
+  min-width: 0;
+}
+.vsc-timer-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #777;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.vsc-timer-clock {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--vsc-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+.vsc-timer-at {
+  font-size: 12px;
+  font-weight: 500;
+  color: #777;
+  margin-left: 4px;
+}
+
 .vsc-membership-sub {
   margin: 0 0 20px;
   font-size: 14px;

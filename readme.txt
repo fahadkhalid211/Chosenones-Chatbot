@@ -26,11 +26,12 @@ no API keys, no per-search costs.
    [video_search_chat]
 
     Optional attributes:
-    [video_search_chat placeholder="Search by topic..." results="1" free_searches="1" membership_url="" levels=""]
+    [video_search_chat placeholder="Search by topic..." results="1" free_searches="1" period_hours="24" membership_url="" levels=""]
 
     - placeholder: text shown in the empty search box
     - results: how many video matches to show per search (default 1)
-    - free_searches: number of free searches for logged-in non-members (default 1)
+    - free_searches: number of free searches for logged-in non-members per period (default 1)
+    - period_hours: reset period in hours (default 24)
     - levels: optional comma-separated PMPro membership level IDs (default checks any active level)
     - membership_url: custom URL for the membership CTA (default auto-detects PMPro levels page)
     - login_url: custom login URL (default wp_login_url)
@@ -40,9 +41,9 @@ no API keys, no per-search costs.
 
 == Paid Memberships Pro Integration ==
 
-- Active Members: Unlimited searches across the entire video library.
-- Logged-in Non-Members: Allowed 1 free search. Upon attempting further searches, search is restricted and a high-converting popup with a CTA to join membership is displayed. The search count is tracked in WordPress user meta (`vsc_search_count`) via a secure AJAX endpoint.
-- Logged-out Visitors (Guests): Prompted to log in (to use their free search) or join membership for unlimited access.
+- Active Members: Unlimited searches across the entire video library without restrictions or timers.
+- Logged-in Non-Members: Allowed 1 free search every 24 hours. Once used, searches are restricted until the 24-hour window resets. A live, ticking countdown timer displays in the banner bar, in the chat message, and inside the membership CTA popup modal showing the exact time and countdown remaining (e.g. 14h 23m 10s at 8:45 PM).
+- Logged-out Visitors (Guests): Prompted to log in (to use their free daily search) or join membership for unlimited access.
 - Administrators: Automatically granted unlimited access.
 
 6. For a true "full page" feel, use a blank/no-sidebar page template and
