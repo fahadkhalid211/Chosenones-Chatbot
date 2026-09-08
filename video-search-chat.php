@@ -203,9 +203,9 @@ function vsc_enqueue_assets($config = []) {
         'resetTimeFormatted'  => '',
         'membershipUrl'       => home_url('/membership-levels/'),
         'loginUrl'            => wp_login_url(),
-        'popupTitle'          => "Unlock Unlimited Searches",
-        'popupMessage'        => "You've used your 1 free search for the next 24 hours. Join our membership today for unlimited access to all video teachings and search features.",
-        'popupButtonText'     => "Join Membership Now",
+        'popupTitle'          => "Daily Free Search Received",
+        'popupMessage'        => "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.",
+        'popupButtonText'     => "Subscribe for More Searches",
     ];
 
     $merged_config = wp_parse_args($config, $default_config);
@@ -225,9 +225,9 @@ function vsc_shortcode($atts) {
         'levels'              => '',
         'membership_url'      => '',
         'login_url'           => '',
-        'popup_title'         => "Daily Free Search Limit Reached",
-        'popup_message'       => "You've used your free search for the next 24 hours. Join our membership today for unlimited access to all video teachings without waiting!",
-        'popup_button_text'   => "Join Membership Now",
+        'popup_title'         => "Daily Free Search Received",
+        'popup_message'       => "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.",
+        'popup_button_text'   => "Subscribe for More Searches",
     ], $atts, 'video_search_chat');
 
     $is_logged_in = is_user_logged_in();
@@ -298,13 +298,13 @@ function vsc_shortcode($atts) {
         <?php if ($is_logged_in && !$is_member && $searches_left <= 0) : ?>
             <div class="vsc-banner-bar vsc-banner-warning">
                 <span>
-                    Free search limit reached (1 search / <?php echo esc_html($period_hours); ?>h).
+                    You have received your daily free video search.
                     Resets in <strong class="vsc-timer-display" data-until="<?php echo esc_attr($seconds_until_reset); ?>">--:--:--</strong>
                     <?php if (!empty($reset_time_formatted)) : ?>
                         <span class="vsc-reset-exact">(at <?php echo esc_html($reset_time_formatted); ?>)</span>
-                    <?php endif; ?>.
+                    <?php endif; ?>. Monthly Subscribers receive multiple daily searches.
                 </span>
-                <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Join Membership for Unlimited Searches &rarr;</a>
+                <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Subscribe Now &rarr;</a>
             </div>
         <?php elseif ($is_logged_in && !$is_member && $searches_left > 0) : ?>
             <div class="vsc-banner-bar vsc-banner-info">

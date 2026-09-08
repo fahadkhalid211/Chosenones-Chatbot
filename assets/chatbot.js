@@ -17,9 +17,9 @@
     timerInterval: null,
     membershipUrl: "",
     loginUrl: "",
-    popupTitle: "Daily Free Search Limit Reached",
-    popupMessage: "You've used your 1 free search for the next 24 hours. Join our membership today for unlimited access to all video teachings without waiting!",
-    popupButtonText: "Join Membership Now",
+    popupTitle: "Daily Free Search Received",
+    popupMessage: "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.",
+    popupButtonText: "Subscribe for More Searches",
     ajaxUrl: "",
     nonce: "",
   };
@@ -231,7 +231,7 @@
       secEl.innerHTML = 'Already a member? <a href="' + escapeHtml(STATE.loginUrl || "#") + '">Log in here</a>';
     } else {
       // limit_reached: 24-hour cooldown in effect
-      titleEl.textContent = STATE.popupTitle || "Daily Free Search Limit Reached";
+      titleEl.textContent = STATE.popupTitle || "Daily Free Search Received";
 
       var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
       var formatted = formatCountdown(remainingSec);
@@ -252,9 +252,9 @@
         '</div>';
 
       if (query) {
-        subEl.innerHTML = "You've used your 1 free search for the next 24 hours. To search for <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em> right now without waiting, join our membership!";
+        subEl.innerHTML = "You have received your daily free video search. Monthly Subscribers receive multiple daily searches across all videos including <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em>.";
       } else {
-        subEl.textContent = STATE.popupMessage || "Logged-in non-members receive 1 free search every 24 hours. Don't want to wait? Join our membership today for instant, unlimited searches!";
+        subEl.textContent = STATE.popupMessage || "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.";
       }
       secEl.innerHTML = '<a href="' + escapeHtml(STATE.membershipUrl || "#") + '">View membership levels &amp; pricing</a>';
     }
@@ -314,10 +314,11 @@
         var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
         banner.innerHTML =
           '<span>' +
-            'Free search limit reached (1 search / ' + escapeHtml(String(STATE.periodHours)) + 'h). ' +
+            'You have received your daily free video search. ' +
             'Resets in <strong class="vsc-timer-display">' + formatCountdown(remainingSec) + '</strong>' + exactText + '. ' +
+            'Monthly Subscribers receive multiple daily searches. ' +
           '</span>' +
-          '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Join Membership for Unlimited Searches &rarr;</a>';
+          '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Subscribe Now &rarr;</a>';
       } else {
         banner.className = "vsc-banner-bar vsc-banner-info";
         banner.innerHTML =
@@ -436,13 +437,13 @@
         ctaCard.className = "vsc-msg vsc-msg-bot vsc-chat-cta-wrap";
         ctaCard.innerHTML =
           '<div class="vsc-chat-cta">' +
-            '<div class="vsc-chat-cta-badge">Daily free search used (1/24h)</div>' +
-            '<h4 class="vsc-chat-cta-title">Enjoyed searching the library?</h4>' +
+            '<div class="vsc-chat-cta-badge">Daily Free Search Received</div>' +
+            '<h4 class="vsc-chat-cta-title">Want multiple daily searches?</h4>' +
             '<p class="vsc-chat-cta-text">' +
-              'Your free search resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '. ' +
-              'Don\'t want to wait 24 hours? Join our membership today for unlimited, instant searches!' +
+              'You have received your daily free video search. Monthly Subscribers receive multiple daily searches. ' +
+              'Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '.' +
             '</p>' +
-            '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-chat-cta-btn">' + escapeHtml(STATE.popupButtonText || "Join Membership Now") + ' &rarr;</a>' +
+            '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-chat-cta-btn">' + escapeHtml(STATE.popupButtonText || "Subscribe for More Searches") + ' &rarr;</a>' +
           '</div>';
         container.appendChild(ctaCard);
         container.scrollTop = container.scrollHeight;
@@ -577,7 +578,7 @@
         var formatted = formatCountdown(remainingSec);
         var exactText = STATE.resetTimeFormatted ? ' (at ' + escapeHtml(STATE.resetTimeFormatted) + ')' : "";
         addMessage(
-          "<p>🔒 <strong>Daily Search Limit Reached:</strong> You have used your 1 free search for the next 24 hours. Resets in <strong class=\"vsc-timer-display\">" + formatted + "</strong>" + exactText + ". <a href=\"" + escapeHtml(STATE.membershipUrl) + "\" class=\"vsc-in-msg-btn\">Join Membership for Unlimited Searches &rarr;</a></p>",
+          "<p>🔒 <strong>Daily Free Search Used:</strong> You have received your daily free video search. Monthly Subscribers receive multiple daily searches. Resets in <strong class=\"vsc-timer-display\">" + formatted + "</strong>" + exactText + ". <a href=\"" + escapeHtml(STATE.membershipUrl) + "\" class=\"vsc-in-msg-btn\">Subscribe for More Searches &rarr;</a></p>",
           "bot"
         );
         return;

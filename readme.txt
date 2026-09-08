@@ -35,9 +35,9 @@ no API keys, no per-search costs.
     - levels: optional comma-separated PMPro membership level IDs (default checks any active level)
     - membership_url: custom URL for the membership CTA (default auto-detects PMPro levels page)
     - login_url: custom login URL (default wp_login_url)
-    - popup_title: title for the membership popup modal
-    - popup_message: message shown in the membership popup modal
-    - popup_button_text: label for the CTA button (default "Join Membership Now")
+    - popup_title: title for the membership popup modal (default "Daily Free Search Received")
+    - popup_message: message shown in the membership popup modal (default "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.")
+    - popup_button_text: label for the CTA button (default "Subscribe for More Searches")
 
 == Paid Memberships Pro Integration ==
 
