@@ -25,11 +25,25 @@ no API keys, no per-search costs.
 
    [video_search_chat]
 
-   Optional attributes:
-   [video_search_chat placeholder="Search by topic..." results="8"]
+    Optional attributes:
+    [video_search_chat placeholder="Search by topic..." results="1" free_searches="1" membership_url="" levels=""]
 
-   - placeholder: text shown in the empty search box
-   - results: how many video matches to show per search (default 6)
+    - placeholder: text shown in the empty search box
+    - results: how many video matches to show per search (default 1)
+    - free_searches: number of free searches for logged-in non-members (default 1)
+    - levels: optional comma-separated PMPro membership level IDs (default checks any active level)
+    - membership_url: custom URL for the membership CTA (default auto-detects PMPro levels page)
+    - login_url: custom login URL (default wp_login_url)
+    - popup_title: title for the membership popup modal
+    - popup_message: message shown in the membership popup modal
+    - popup_button_text: label for the CTA button (default "Join Membership Now")
+
+== Paid Memberships Pro Integration ==
+
+- Active Members: Unlimited searches across the entire video library.
+- Logged-in Non-Members: Allowed 1 free search. Upon attempting further searches, search is restricted and a high-converting popup with a CTA to join membership is displayed. The search count is tracked in WordPress user meta (`vsc_search_count`) via a secure AJAX endpoint.
+- Logged-out Visitors (Guests): Prompted to log in (to use their free search) or join membership for unlimited access.
+- Administrators: Automatically granted unlimited access.
 
 6. For a true "full page" feel, use a blank/no-sidebar page template and
    place the shortcode as the only content on the page.
