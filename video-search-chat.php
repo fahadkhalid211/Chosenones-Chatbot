@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Video Search Chat
- * Description: Full-page AI-style semantic search chatbot for a video library hosted on Google Drive. Search runs entirely in the visitor's browser — no API costs. Integrates with Paid Memberships Pro: 1 free search every 24 hours for logged-in non-members with a live countdown timer and membership CTA, and unlimited searches for active members. Use the [video_search_chat] shortcode on any page.
- * Version: 1.2.0
+ * Description: Full-page AI-style semantic search chatbot for a video library hosted on Google Drive. Search runs entirely in the visitor's browser — no API costs. Integrates with Paid Memberships Pro: 1 free search every 24 hours for logged-in non-members, and 10 searches per day for monthly members with live countdown timers and subscription CTAs. Use the [video_search_chat] shortcode on any page.
+ * Version: 1.3.0
  * Author: Fahad Khalid
  * License: GPL v2 or later
  */
@@ -11,13 +11,12 @@ if (!defined('ABSPATH')) {
     exit; // No direct access
 }
 
-define('VSC_VERSION', '1.2.0');
+define('VSC_VERSION', '1.3.0');
 define('VSC_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('VSC_PLUGIN_PATH', plugin_dir_path(__FILE__));
 
 /**
  * Check if a user has an active membership level in Paid Memberships Pro.
- * Administrators are also treated as members with unlimited searches.
  *
  * @param int|null $user_id User ID or null for current user.
  * @param string|array|null $levels Specific PMPro level IDs/names (optional).
@@ -30,11 +29,6 @@ function vsc_is_user_active_member($user_id = null, $levels = null) {
 
     if (!$user_id) {
         return false;
-    }
-
-    // Site administrators always have unlimited access
-    if (user_can($user_id, 'manage_options')) {
-        return apply_filters('vsc_is_active_member', true, $user_id);
     }
 
     $is_member = false;
@@ -80,32 +74,51 @@ function vsc_get_membership_url($custom_url = '') {
 }
 
 /**
- * Calculate search status for a user with a rolling 24-hour reset window.
+ * Calculate search status for a user with a rolling 24-hour cycle.
+ * Handles both 1 free search/day (non-members) and 10 searches/day (monthly members).
  *
  * @param int $user_id User ID.
- * @param int $free_limit Searches allowed per period (default: 1).
- * @param int $period_hours Hours before the free search resets (default: 24).
+ * @param int $allowed_limit Searches allowed per cycle (1 for non-members, 10 for members).
+ * @param int $period_hours Hours before the daily search cycle resets (default: 24).
  * @return array
  */
-function vsc_get_user_search_status($user_id, $free_limit = 1, $period_hours = 24) {
+function vsc_get_user_search_status($user_id, $allowed_limit = 1, $period_hours = 24) {
     $now = time();
     $window_seconds = max(1, $period_hours) * HOUR_IN_SECONDS;
-    $last_search_time = (int) get_user_meta($user_id, 'vsc_last_search_time', true);
+    $cycle_start    = (int) get_user_meta($user_id, 'vsc_cycle_start_time', true);
 
-    if ($last_search_time > 0 && ($now - $last_search_time) < $window_seconds) {
-        $seconds_left = $window_seconds - ($now - $last_search_time);
-        $reset_ts     = $last_search_time + $window_seconds;
+    // Backward compatibility with previous version
+    if (!$cycle_start) {
+        $cycle_start = (int) get_user_meta($user_id, 'vsc_last_search_time', true);
+    }
+
+    $used_in_cycle = (int) get_user_meta($user_id, 'vsc_cycle_search_count', true);
+    if (!$used_in_cycle && $cycle_start > 0) {
+        $used_in_cycle = 1;
+    }
+
+    if ($cycle_start > 0 && ($now - $cycle_start) < $window_seconds) {
+        $seconds_left  = $window_seconds - ($now - $cycle_start);
+        $reset_ts      = $cycle_start + $window_seconds;
+        $searches_left = max(0, $allowed_limit - $used_in_cycle);
 
         return [
-            'searches_left'        => 0,
+            'cycle_active'         => true,
+            'used_in_cycle'        => $used_in_cycle,
+            'allowed_limit'        => $allowed_limit,
+            'searches_left'        => $searches_left,
             'seconds_until_reset'  => $seconds_left,
             'reset_timestamp'      => $reset_ts,
             'reset_time_formatted' => wp_date(get_option('time_format'), $reset_ts),
         ];
     }
 
+    // Cycle has expired or no cycle started yet
     return [
-        'searches_left'        => max(1, $free_limit),
+        'cycle_active'         => false,
+        'used_in_cycle'        => 0,
+        'allowed_limit'        => $allowed_limit,
+        'searches_left'        => max(1, $allowed_limit),
         'seconds_until_reset'  => 0,
         'reset_timestamp'      => 0,
         'reset_time_formatted' => '',
@@ -113,7 +126,8 @@ function vsc_get_user_search_status($user_id, $free_limit = 1, $period_hours = 2
 }
 
 /**
- * AJAX endpoint to record a search execution for logged-in non-members.
+ * AJAX endpoint to record a search execution.
+ * Enforces 1 search/day for non-members, 10 searches/day for monthly members.
  */
 function vsc_ajax_record_search() {
     check_ajax_referer('vsc_search_nonce', 'nonce');
@@ -124,47 +138,81 @@ function vsc_ajax_record_search() {
 
     $user_id = get_current_user_id();
 
-    // Active members have unlimited searches; no need to increment or limit
-    if (vsc_is_user_active_member($user_id)) {
+    // Site administrators can be granted unlimited searches via filter
+    $is_admin = user_can($user_id, 'manage_options');
+    if ($is_admin && apply_filters('vsc_admin_unlimited', true, $user_id)) {
         wp_send_json_success([
             'unlimited'            => true,
             'searches_left'        => -1,
+            'used_in_cycle'        => 0,
+            'allowed_limit'        => -1,
             'reset_timestamp'      => 0,
             'seconds_until_reset'  => 0,
             'reset_time_formatted' => '',
         ]);
     }
 
-    $period_hours = (int) apply_filters('vsc_reset_period_hours', 24, $user_id);
-    $status = vsc_get_user_search_status($user_id, 1, $period_hours);
+    $is_member     = vsc_is_user_active_member($user_id);
+    $period_hours  = (int) apply_filters('vsc_reset_period_hours', 24, $user_id);
+    $member_limit  = (int) apply_filters('vsc_member_searches_limit', 10, $user_id);
+    $free_limit    = (int) apply_filters('vsc_free_searches_limit', 1, $user_id);
+    $allowed_limit = $is_member ? $member_limit : $free_limit;
 
-    // If within 24h cooldown, reject further searches
-    if ($status['searches_left'] <= 0) {
-        wp_send_json_error([
-            'message'              => '24-hour search limit reached.',
-            'unlimited'            => false,
-            'searches_left'        => 0,
-            'seconds_until_reset'  => $status['seconds_until_reset'],
-            'reset_timestamp'      => $status['reset_timestamp'],
-            'reset_time_formatted' => $status['reset_time_formatted'],
-        ], 429);
+    $now            = time();
+    $window_seconds = max(1, $period_hours) * HOUR_IN_SECONDS;
+    $cycle_start    = (int) get_user_meta($user_id, 'vsc_cycle_start_time', true);
+    if (!$cycle_start) {
+        $cycle_start = (int) get_user_meta($user_id, 'vsc_last_search_time', true);
+    }
+    $used_in_cycle  = (int) get_user_meta($user_id, 'vsc_cycle_search_count', true);
+    if (!$used_in_cycle && $cycle_start > 0) {
+        $used_in_cycle = 1;
     }
 
-    $now = time();
-    $window_seconds = max(1, $period_hours) * HOUR_IN_SECONDS;
-    $reset_ts = $now + $window_seconds;
+    // Check if within existing cycle
+    if ($cycle_start > 0 && ($now - $cycle_start) < $window_seconds) {
+        if ($used_in_cycle >= $allowed_limit) {
+            $remaining = $window_seconds - ($now - $cycle_start);
+            $reset_ts  = $cycle_start + $window_seconds;
+            wp_send_json_error([
+                'message'              => 'Daily search limit reached.',
+                'unlimited'            => false,
+                'is_member'            => $is_member,
+                'searches_left'        => 0,
+                'used_in_cycle'        => $used_in_cycle,
+                'allowed_limit'        => $allowed_limit,
+                'seconds_until_reset'  => $remaining,
+                'reset_timestamp'      => $reset_ts * 1000,
+                'reset_time_formatted' => wp_date(get_option('time_format'), $reset_ts),
+            ], 429);
+        }
+        $used_in_cycle++;
+    } else {
+        // Start new cycle
+        $cycle_start   = $now;
+        $used_in_cycle = 1;
+        update_user_meta($user_id, 'vsc_cycle_start_time', $cycle_start);
+    }
 
-    // Record search timestamp and increment lifetime search count
+    update_user_meta($user_id, 'vsc_cycle_search_count', $used_in_cycle);
     update_user_meta($user_id, 'vsc_last_search_time', $now);
-    $current_count = (int) get_user_meta($user_id, 'vsc_search_count', true);
-    update_user_meta($user_id, 'vsc_search_count', $current_count + 1);
+
+    $total_count = (int) get_user_meta($user_id, 'vsc_search_count', true);
+    update_user_meta($user_id, 'vsc_search_count', $total_count + 1);
+
+    $searches_left = max(0, $allowed_limit - $used_in_cycle);
+    $reset_ts      = $cycle_start + $window_seconds;
+    $remaining_sec = max(0, $reset_ts - $now);
 
     wp_send_json_success([
         'unlimited'            => false,
-        'search_count'         => $current_count + 1,
-        'searches_left'        => 0,
-        'seconds_until_reset'  => $window_seconds,
-        'reset_timestamp'      => $reset_ts,
+        'is_member'            => $is_member,
+        'search_count'         => $total_count + 1,
+        'used_in_cycle'        => $used_in_cycle,
+        'allowed_limit'        => $allowed_limit,
+        'searches_left'        => $searches_left,
+        'seconds_until_reset'  => $remaining_sec,
+        'reset_timestamp'      => $reset_ts * 1000,
         'reset_time_formatted' => wp_date(get_option('time_format'), $reset_ts),
     ]);
 }
@@ -195,8 +243,12 @@ function vsc_enqueue_assets($config = []) {
         'nonce'               => wp_create_nonce('vsc_search_nonce'),
         'isLoggedIn'          => false,
         'isMember'            => false,
+        'isUnlimited'         => false,
         'searchesLeft'        => 0,
+        'allowedLimit'        => 1,
+        'usedInCycle'         => 0,
         'freeLimit'           => 1,
+        'memberLimit'         => 10,
         'periodHours'         => 24,
         'secondsUntilReset'   => 0,
         'resetTimestamp'      => 0,
@@ -221,6 +273,7 @@ function vsc_shortcode($atts) {
         'placeholder'         => 'Search videos... e.g. faith, forgiveness, prayer',
         'results'             => 1,
         'free_searches'       => 1,
+        'member_searches'     => 10,
         'period_hours'        => 24,
         'levels'              => '',
         'membership_url'      => '',
@@ -238,18 +291,37 @@ function vsc_shortcode($atts) {
     $login_url      = !empty($atts['login_url']) ? esc_url_raw($atts['login_url']) : wp_login_url(get_permalink());
 
     $free_limit   = max(1, intval($atts['free_searches']));
+    $member_limit = max(1, intval($atts['member_searches']));
     $period_hours = max(1, intval($atts['period_hours']));
 
+    $is_unlimited         = false;
     $searches_left        = 0;
+    $allowed_limit        = 1;
+    $used_in_cycle        = 0;
     $seconds_until_reset  = 0;
     $reset_timestamp      = 0;
     $reset_time_formatted = '';
 
-    if ($is_member) {
-        $searches_left = -1; // unlimited searches
+    if ($is_logged_in && user_can($user_id, 'manage_options') && apply_filters('vsc_admin_unlimited', true, $user_id)) {
+        // Admin with unlimited testing access
+        $is_unlimited  = true;
+        $searches_left = -1;
+        $allowed_limit = -1;
+    } elseif ($is_member) {
+        // Monthly subscriber: gets 10 searches per 24 hours
+        $allowed_limit        = $member_limit;
+        $status               = vsc_get_user_search_status($user_id, $member_limit, $period_hours);
+        $searches_left        = $status['searches_left'];
+        $used_in_cycle        = $status['used_in_cycle'];
+        $seconds_until_reset  = $status['seconds_until_reset'];
+        $reset_timestamp      = $status['reset_timestamp'];
+        $reset_time_formatted = $status['reset_time_formatted'];
     } elseif ($is_logged_in) {
+        // Logged-in non-member: gets 1 free search per 24 hours
+        $allowed_limit        = $free_limit;
         $status               = vsc_get_user_search_status($user_id, $free_limit, $period_hours);
         $searches_left        = $status['searches_left'];
+        $used_in_cycle        = $status['used_in_cycle'];
         $seconds_until_reset  = $status['seconds_until_reset'];
         $reset_timestamp      = $status['reset_timestamp'];
         $reset_time_formatted = $status['reset_time_formatted'];
@@ -264,8 +336,12 @@ function vsc_shortcode($atts) {
         'nonce'               => wp_create_nonce('vsc_search_nonce'),
         'isLoggedIn'          => $is_logged_in,
         'isMember'            => $is_member,
+        'isUnlimited'         => $is_unlimited,
         'searchesLeft'        => $searches_left,
+        'allowedLimit'        => $allowed_limit,
+        'usedInCycle'         => $used_in_cycle,
         'freeLimit'           => $free_limit,
+        'memberLimit'         => $member_limit,
         'periodHours'         => $period_hours,
         'secondsUntilReset'   => $seconds_until_reset,
         'resetTimestamp'      => $reset_timestamp,
@@ -283,8 +359,12 @@ function vsc_shortcode($atts) {
          data-max-results="<?php echo esc_attr($atts['results']); ?>"
          data-logged-in="<?php echo $is_logged_in ? '1' : '0'; ?>"
          data-is-member="<?php echo $is_member ? '1' : '0'; ?>"
+         data-is-unlimited="<?php echo $is_unlimited ? '1' : '0'; ?>"
          data-searches-left="<?php echo esc_attr($searches_left); ?>"
+         data-allowed-limit="<?php echo esc_attr($allowed_limit); ?>"
+         data-used-in-cycle="<?php echo esc_attr($used_in_cycle); ?>"
          data-free-limit="<?php echo esc_attr($free_limit); ?>"
+         data-member-limit="<?php echo esc_attr($member_limit); ?>"
          data-period-hours="<?php echo esc_attr($period_hours); ?>"
          data-seconds-until-reset="<?php echo esc_attr($seconds_until_reset); ?>"
          data-reset-timestamp="<?php echo esc_attr($reset_timestamp); ?>"
@@ -295,25 +375,53 @@ function vsc_shortcode($atts) {
          data-popup-message="<?php echo esc_attr($atts['popup_message']); ?>"
          data-popup-button="<?php echo esc_attr($atts['popup_button_text']); ?>">
 
-        <?php if ($is_logged_in && !$is_member && $searches_left <= 0) : ?>
-            <div class="vsc-banner-bar vsc-banner-warning">
-                <span>
-                    You have received your daily free video search.
-                    Resets in <strong class="vsc-timer-display" data-until="<?php echo esc_attr($seconds_until_reset); ?>">--:--:--</strong>
-                    <?php if (!empty($reset_time_formatted)) : ?>
-                        <span class="vsc-reset-exact">(at <?php echo esc_html($reset_time_formatted); ?>)</span>
-                    <?php endif; ?>. Monthly Subscribers receive multiple daily searches.
-                </span>
-                <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Subscribe Now &rarr;</a>
-            </div>
-        <?php elseif ($is_logged_in && !$is_member && $searches_left > 0) : ?>
-            <div class="vsc-banner-bar vsc-banner-info">
-                <span>You have <strong>1 free search</strong> available today (resets every <?php echo esc_html($period_hours); ?> hours).</span>
-                <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Join Membership for Unlimited &rarr;</a>
-            </div>
+        <?php if ($is_logged_in && $is_member && !$is_unlimited) : ?>
+            <?php if ($searches_left <= 0) : ?>
+                <div class="vsc-banner-bar vsc-banner-warning">
+                    <span>
+                        You have used all <strong><?php echo esc_html($member_limit); ?> daily searches</strong> for today.
+                        Resets in <strong class="vsc-timer-display" data-until="<?php echo esc_attr($seconds_until_reset); ?>">--:--:--</strong>
+                        <?php if (!empty($reset_time_formatted)) : ?>
+                            <span class="vsc-reset-exact">(at <?php echo esc_html($reset_time_formatted); ?>)</span>
+                        <?php endif; ?>.
+                    </span>
+                </div>
+            <?php elseif ($used_in_cycle > 0) : ?>
+                <div class="vsc-banner-bar vsc-banner-member">
+                    <span>
+                        🌟 <strong>Monthly Subscriber:</strong> You have <strong><?php echo esc_html($searches_left); ?> of <?php echo esc_html($member_limit); ?> daily searches</strong> remaining today.
+                        Resets in <strong class="vsc-timer-display" data-until="<?php echo esc_attr($seconds_until_reset); ?>">--:--:--</strong>
+                        <?php if (!empty($reset_time_formatted)) : ?>
+                            <span class="vsc-reset-exact">(at <?php echo esc_html($reset_time_formatted); ?>)</span>
+                        <?php endif; ?>.
+                    </span>
+                </div>
+            <?php else : ?>
+                <div class="vsc-banner-bar vsc-banner-member">
+                    <span>🌟 <strong>Monthly Subscriber:</strong> You have <strong><?php echo esc_html($member_limit); ?> daily searches</strong> available today.</span>
+                </div>
+            <?php endif; ?>
+        <?php elseif ($is_logged_in && !$is_member) : ?>
+            <?php if ($searches_left <= 0) : ?>
+                <div class="vsc-banner-bar vsc-banner-warning">
+                    <span>
+                        You have received your daily free video search.
+                        Resets in <strong class="vsc-timer-display" data-until="<?php echo esc_attr($seconds_until_reset); ?>">--:--:--</strong>
+                        <?php if (!empty($reset_time_formatted)) : ?>
+                            <span class="vsc-reset-exact">(at <?php echo esc_html($reset_time_formatted); ?>)</span>
+                        <?php endif; ?>. Monthly Subscribers receive multiple daily searches.
+                    </span>
+                    <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Subscribe Now &rarr;</a>
+                </div>
+            <?php else : ?>
+                <div class="vsc-banner-bar vsc-banner-info">
+                    <span>You have <strong>1 free search</strong> available today (resets every <?php echo esc_html($period_hours); ?> hours).</span>
+                    <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Subscribe for 10 Daily Searches &rarr;</a>
+                </div>
+            <?php endif; ?>
         <?php elseif (!$is_logged_in) : ?>
             <div class="vsc-banner-bar vsc-banner-guest">
-                <span>Have an account? <a href="<?php echo esc_url($login_url); ?>" class="vsc-banner-link">Log in</a> to use your free daily search, or <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Join Membership</a>.</span>
+                <span>Have an account? <a href="<?php echo esc_url($login_url); ?>" class="vsc-banner-link">Log in</a> to use your free daily search, or <a href="<?php echo esc_url($membership_url); ?>" class="vsc-banner-link">Subscribe for 10 Daily Searches</a>.</span>
             </div>
         <?php endif; ?>
 

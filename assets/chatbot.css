@@ -369,6 +369,19 @@
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
+.vsc-banner-member {
+  background: #fbf5fb;
+  color: var(--vsc-primary-dark);
+  border-color: #eedfee;
+}
+.vsc-banner-member .vsc-timer-display {
+  color: var(--vsc-primary);
+  background: rgba(114, 9, 113, 0.08);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 700;
+  display: inline-block;
+}
 .vsc-banner-guest {
   background: #f4f6fb;
   color: #2c4778;
@@ -452,6 +465,20 @@
 }
 .vsc-in-msg-btn:hover {
   color: var(--vsc-primary-dark);
+}
+
+.vsc-chat-member-status {
+  background: #fbf5fb;
+  border: 1px solid #ebd4eb;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: #444;
+  line-height: 1.45;
+  text-align: center;
+}
+.vsc-chat-member-status strong {
+  color: var(--vsc-primary);
 }
 
 /* ─── Membership Popup Modal ─────────────────────────────────────── */

@@ -8,8 +8,12 @@
     maxResults: 3,
     isLoggedIn: false,
     isMember: false,
+    isUnlimited: false,
     searchesLeft: 0,
+    allowedLimit: 1,
+    usedInCycle: 0,
     freeLimit: 1,
+    memberLimit: 10,
     periodHours: 24,
     secondsUntilReset: 0,
     resetTimestamp: 0,
@@ -60,7 +64,7 @@
       STATE.timerInterval = null;
     }
 
-    if (STATE.isMember || STATE.searchesLeft > 0 || !STATE.resetTimestamp) {
+    if (STATE.isUnlimited || !STATE.resetTimestamp) {
       return;
     }
 
@@ -88,15 +92,26 @@
       if (remainingSec <= 0) {
         clearInterval(STATE.timerInterval);
         STATE.timerInterval = null;
-        STATE.searchesLeft = 1;
         STATE.resetTimestamp = 0;
         STATE.secondsUntilReset = 0;
-        updateBannerUI();
+        STATE.usedInCycle = 0;
 
-        addMessage(
-          "<p>✨ <strong>Good news!</strong> Your daily free search has just reset. You now have 1 free search available!</p>",
-          "bot"
-        );
+        if (STATE.isMember) {
+          STATE.searchesLeft = STATE.memberLimit;
+          updateBannerUI();
+          addMessage(
+            "<p>✨ <strong>Good news!</strong> Your daily subscriber searches have reset. You now have " +
+            escapeHtml(String(STATE.memberLimit)) + " searches available today!</p>",
+            "bot"
+          );
+        } else {
+          STATE.searchesLeft = STATE.freeLimit;
+          updateBannerUI();
+          addMessage(
+            "<p>✨ <strong>Good news!</strong> Your daily free search has reset. You now have 1 free search available!</p>",
+            "bot"
+          );
+        }
       }
     }
 
@@ -167,13 +182,13 @@
             '</svg>' +
           '</div>' +
         '</div>' +
-        '<h2 class="vsc-membership-title" id="vsc-membership-title">Unlock Unlimited Searches</h2>' +
+        '<h2 class="vsc-membership-title" id="vsc-membership-title">Daily Free Search Received</h2>' +
         '<div id="vsc-modal-timer-container"></div>' +
         '<p class="vsc-membership-sub" id="vsc-membership-sub"></p>' +
-        '<div class="vsc-membership-perks">' +
+        '<div class="vsc-membership-perks" id="vsc-modal-perks">' +
           '<div class="vsc-perk">' +
             '<span class="vsc-perk-icon">&#10003;</span>' +
-            '<span><strong>Unlimited searches</strong> — no 24-hour waiting period</span>' +
+            '<span><strong>10 video searches every day</strong> for monthly subscribers</span>' +
           '</div>' +
           '<div class="vsc-perk">' +
             '<span class="vsc-perk-icon">&#10003;</span>' +
@@ -185,7 +200,7 @@
           '</div>' +
         '</div>' +
         '<div class="vsc-membership-actions">' +
-          '<a id="vsc-membership-cta" href="#" class="vsc-membership-btn">Join Membership Now &rarr;</a>' +
+          '<a id="vsc-membership-cta" href="#" class="vsc-membership-btn">Subscribe for More Searches &rarr;</a>' +
           '<div id="vsc-membership-secondary" class="vsc-membership-secondary"></div>' +
         '</div>' +
       '</div>';
@@ -215,22 +230,67 @@
     var subEl      = $("vsc-membership-sub");
     var ctaEl      = $("vsc-membership-cta");
     var secEl      = $("vsc-membership-secondary");
+    var perksEl    = $("vsc-modal-perks");
     var overlay    = $("vsc-membership-modal");
 
     ctaEl.href = STATE.membershipUrl || "#";
-    ctaEl.textContent = (STATE.popupButtonText || "Join Membership Now") + " \u2192";
+    ctaEl.textContent = (STATE.popupButtonText || "Subscribe for More Searches") + " \u2192";
 
     if (reason === "guest") {
       titleEl.textContent = "Membership Required";
       timerWrap.innerHTML = "";
       if (query) {
-        subEl.innerHTML = "Log in to search for <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em> with your free daily search, or join our membership for unlimited access!";
+        subEl.innerHTML = "Log in to search for <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em> with your free daily search, or subscribe for 10 searches per day!";
       } else {
-        subEl.textContent = "Please log in to your account to use your free daily search (1 search every 24 hours), or join our membership for unlimited access to the entire video library.";
+        subEl.textContent = "Please log in to your account to use your free daily search, or become a Monthly Subscriber to get 10 searches every day.";
       }
       secEl.innerHTML = 'Already a member? <a href="' + escapeHtml(STATE.loginUrl || "#") + '">Log in here</a>';
+    } else if (reason === "member_limit_reached") {
+      // Monthly member who has reached their 10 daily searches
+      titleEl.textContent = "Daily Subscriber Limit Reached";
+
+      var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
+      var formatted = formatCountdown(remainingSec);
+      var exactTimeText = STATE.resetTimeFormatted ? ' <span class="vsc-timer-at">(at ' + escapeHtml(STATE.resetTimeFormatted) + ')</span>' : "";
+
+      timerWrap.innerHTML =
+        '<div class="vsc-modal-timer-box">' +
+          '<div class="vsc-timer-icon-wrap">' +
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+              '<circle cx="12" cy="12" r="10"/>' +
+              '<polyline points="12 6 12 12 16 14"/>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="vsc-timer-info">' +
+            '<div class="vsc-timer-label">Your ' + escapeHtml(String(STATE.memberLimit)) + ' daily searches reset in:</div>' +
+            '<div class="vsc-timer-clock"><span id="vsc-modal-timer">' + formatted + '</span>' + exactTimeText + '</div>' +
+          '</div>' +
+        '</div>';
+
+      if (query) {
+        subEl.innerHTML = "You have used all " + escapeHtml(String(STATE.memberLimit)) + " of your daily subscriber searches for today. Your searches will reset in <strong>" + formatted + "</strong>.";
+      } else {
+        subEl.innerHTML = "You have used all " + escapeHtml(String(STATE.memberLimit)) + " of your daily video searches for today. Your 10 searches reset every 24 hours.";
+      }
+
+      perksEl.innerHTML =
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>10 daily searches</strong> renewed every 24 hours</span>' +
+        '</div>' +
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>Full access</strong> to Amato The Mentor\'s entire video library</span>' +
+        '</div>' +
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>Unlimited video playback</strong> in full high definition</span>' +
+        '</div>';
+
+      ctaEl.textContent = "View My Subscription \u2192";
+      secEl.innerHTML = 'Thank you for being an active subscriber!';
     } else {
-      // limit_reached: 24-hour cooldown in effect
+      // limit_reached: Logged-in non-member has used their 1 free search
       titleEl.textContent = STATE.popupTitle || "Daily Free Search Received";
 
       var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
@@ -252,10 +312,26 @@
         '</div>';
 
       if (query) {
-        subEl.innerHTML = "You have received your daily free video search. Monthly Subscribers receive multiple daily searches across all videos including <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em>.";
+        subEl.innerHTML = "You have received your daily free video search. Monthly Subscribers receive multiple daily searches (10 searches/day) across all videos including <em>&ldquo;" + escapeHtml(query) + "&rdquo;</em>.";
       } else {
         subEl.textContent = STATE.popupMessage || "You have received your daily free video search. Monthly Subscribers receive multiple daily searches.";
       }
+
+      perksEl.innerHTML =
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>10 video searches every day</strong> for monthly subscribers</span>' +
+        '</div>' +
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>Instant AI matching</strong> by topic, scripture, and meaning</span>' +
+        '</div>' +
+        '<div class="vsc-perk">' +
+          '<span class="vsc-perk-icon">&#10003;</span>' +
+          '<span><strong>Full-length player</strong> with immediate playback</span>' +
+        '</div>';
+
+      ctaEl.textContent = (STATE.popupButtonText || "Subscribe for More Searches") + " \u2192";
       secEl.innerHTML = '<a href="' + escapeHtml(STATE.membershipUrl || "#") + '">View membership levels &amp; pricing</a>';
     }
 
@@ -280,6 +356,12 @@
         if (data && data.success && data.data) {
           if (!data.data.unlimited) {
             STATE.searchesLeft = data.data.searches_left;
+            if (data.data.used_in_cycle != null) {
+              STATE.usedInCycle = data.data.used_in_cycle;
+            }
+            if (data.data.allowed_limit != null) {
+              STATE.allowedLimit = data.data.allowed_limit;
+            }
             if (data.data.seconds_until_reset) {
               STATE.secondsUntilReset = data.data.seconds_until_reset;
               STATE.resetTimestamp = Date.now() + (data.data.seconds_until_reset * 1000);
@@ -302,20 +384,46 @@
     var banner = document.querySelector(".vsc-banner-bar");
     if (!banner) return;
 
-    if (STATE.isMember) {
+    if (STATE.isUnlimited) {
       banner.style.display = "none";
       return;
     }
 
-    if (STATE.isLoggedIn) {
+    var exactText = STATE.resetTimeFormatted ? ' <span class="vsc-reset-exact">(at ' + escapeHtml(STATE.resetTimeFormatted) + ')</span>' : "";
+    var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
+    var formatted = formatCountdown(remainingSec);
+
+    if (STATE.isLoggedIn && STATE.isMember) {
+      // Monthly Subscriber
       if (STATE.searchesLeft <= 0) {
         banner.className = "vsc-banner-bar vsc-banner-warning";
-        var exactText = STATE.resetTimeFormatted ? ' <span class="vsc-reset-exact">(at ' + escapeHtml(STATE.resetTimeFormatted) + ')</span>' : "";
-        var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
+        banner.innerHTML =
+          '<span>' +
+            'You have used all <strong>' + escapeHtml(String(STATE.memberLimit)) + ' daily searches</strong> for today. ' +
+            'Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '.' +
+          '</span>';
+      } else if (STATE.usedInCycle > 0 || STATE.resetTimestamp > 0) {
+        banner.className = "vsc-banner-bar vsc-banner-member";
+        banner.innerHTML =
+          '<span>' +
+            '🌟 <strong>Monthly Subscriber:</strong> You have <strong>' + escapeHtml(String(STATE.searchesLeft)) +
+            ' of ' + escapeHtml(String(STATE.memberLimit)) + ' daily searches</strong> remaining today. ' +
+            'Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '.' +
+          '</span>';
+      } else {
+        banner.className = "vsc-banner-bar vsc-banner-member";
+        banner.innerHTML =
+          '<span>🌟 <strong>Monthly Subscriber:</strong> You have <strong>' +
+          escapeHtml(String(STATE.memberLimit)) + ' daily searches</strong> available today.</span>';
+      }
+    } else if (STATE.isLoggedIn && !STATE.isMember) {
+      // Non-member logged in
+      if (STATE.searchesLeft <= 0) {
+        banner.className = "vsc-banner-bar vsc-banner-warning";
         banner.innerHTML =
           '<span>' +
             'You have received your daily free video search. ' +
-            'Resets in <strong class="vsc-timer-display">' + formatCountdown(remainingSec) + '</strong>' + exactText + '. ' +
+            'Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '. ' +
             'Monthly Subscribers receive multiple daily searches. ' +
           '</span>' +
           '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Subscribe Now &rarr;</a>';
@@ -323,8 +431,13 @@
         banner.className = "vsc-banner-bar vsc-banner-info";
         banner.innerHTML =
           '<span>You have <strong>1 free search</strong> available today (resets every ' + escapeHtml(String(STATE.periodHours)) + ' hours).</span> ' +
-          '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Join Membership for Unlimited &rarr;</a>';
+          '<a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Subscribe for 10 Daily Searches &rarr;</a>';
       }
+    } else {
+      // Guest
+      banner.className = "vsc-banner-bar vsc-banner-guest";
+      banner.innerHTML =
+        '<span>Have an account? <a href="' + escapeHtml(STATE.loginUrl) + '" class="vsc-banner-link">Log in</a> to use your free daily search, or <a href="' + escapeHtml(STATE.membershipUrl) + '" class="vsc-banner-link">Subscribe for 10 Daily Searches</a>.</span>';
     }
   }
 
@@ -426,13 +539,36 @@
     container.appendChild(wrap);
     setTimeout(function () { container.scrollTop = container.scrollHeight; }, 30);
 
-    // If logged-in non-member who has used their 24-hour free search, show in-chat CTA card with timer
-    if (!STATE.isMember && STATE.isLoggedIn && STATE.searchesLeft <= 0) {
-      setTimeout(function () {
-        var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
-        var formatted = formatCountdown(remainingSec);
-        var exactText = STATE.resetTimeFormatted ? ' (at ' + escapeHtml(STATE.resetTimeFormatted) + ')' : "";
+    // Show remaining daily searches or CTA card
+    var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
+    var formatted = formatCountdown(remainingSec);
+    var exactText = STATE.resetTimeFormatted ? ' (at ' + escapeHtml(STATE.resetTimeFormatted) + ')' : "";
 
+    if (STATE.isMember && !STATE.isUnlimited) {
+      setTimeout(function () {
+        var memberNote = document.createElement("div");
+        memberNote.className = "vsc-msg vsc-msg-bot vsc-chat-cta-wrap";
+        if (STATE.searchesLeft <= 0) {
+          memberNote.innerHTML =
+            '<div class="vsc-chat-cta">' +
+              '<div class="vsc-chat-cta-badge">Daily Limit Reached</div>' +
+              '<h4 class="vsc-chat-cta-title">All 10 daily searches used</h4>' +
+              '<p class="vsc-chat-cta-text">' +
+                'You have used all 10 of your daily subscriber searches for today. Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '.' +
+              '</p>' +
+            '</div>';
+        } else {
+          memberNote.innerHTML =
+            '<div class="vsc-chat-member-status">' +
+              '🌟 <strong>' + escapeHtml(String(STATE.searchesLeft)) + ' of ' + escapeHtml(String(STATE.memberLimit)) + ' daily searches remaining today</strong>. Resets in <strong class="vsc-timer-display">' + formatted + '</strong>' + exactText + '.' +
+            '</div>';
+        }
+        container.appendChild(memberNote);
+        container.scrollTop = container.scrollHeight;
+      }, 500);
+    } else if (!STATE.isMember && STATE.isLoggedIn && STATE.searchesLeft <= 0) {
+      // Non-member who has used their 1 free search
+      setTimeout(function () {
         var ctaCard = document.createElement("div");
         ctaCard.className = "vsc-msg vsc-msg-bot vsc-chat-cta-wrap";
         ctaCard.innerHTML =
@@ -461,16 +597,20 @@
     STATE.maxResults         = parseInt(app.getAttribute("data-max-results"), 10) || 3;
     STATE.isLoggedIn         = cfg.isLoggedIn != null ? Boolean(cfg.isLoggedIn) : (app.getAttribute("data-logged-in") === "1");
     STATE.isMember           = cfg.isMember != null ? Boolean(cfg.isMember) : (app.getAttribute("data-is-member") === "1");
+    STATE.isUnlimited        = cfg.isUnlimited != null ? Boolean(cfg.isUnlimited) : (app.getAttribute("data-is-unlimited") === "1");
     STATE.searchesLeft       = cfg.searchesLeft != null ? parseInt(cfg.searchesLeft, 10) : (parseInt(app.getAttribute("data-searches-left"), 10) || 0);
+    STATE.allowedLimit       = cfg.allowedLimit != null ? parseInt(cfg.allowedLimit, 10) : (parseInt(app.getAttribute("data-allowed-limit"), 10) || 1);
+    STATE.usedInCycle        = cfg.usedInCycle != null ? parseInt(cfg.usedInCycle, 10) : (parseInt(app.getAttribute("data-used-in-cycle"), 10) || 0);
     STATE.freeLimit          = cfg.freeLimit != null ? parseInt(cfg.freeLimit, 10) : (parseInt(app.getAttribute("data-free-limit"), 10) || 1);
+    STATE.memberLimit        = cfg.memberLimit != null ? parseInt(cfg.memberLimit, 10) : (parseInt(app.getAttribute("data-member-limit"), 10) || 10);
     STATE.periodHours        = cfg.periodHours != null ? parseInt(cfg.periodHours, 10) : (parseInt(app.getAttribute("data-period-hours"), 10) || 24);
     STATE.secondsUntilReset  = cfg.secondsUntilReset != null ? parseInt(cfg.secondsUntilReset, 10) : (parseInt(app.getAttribute("data-seconds-until-reset"), 10) || 0);
     STATE.resetTimeFormatted = cfg.resetTimeFormatted || app.getAttribute("data-reset-formatted") || "";
     STATE.membershipUrl      = cfg.membershipUrl || app.getAttribute("data-membership-url") || "";
     STATE.loginUrl           = cfg.loginUrl || app.getAttribute("data-login-url") || "";
-    STATE.popupTitle         = cfg.popupTitle || app.getAttribute("data-popup-title") || "Daily Free Search Limit Reached";
+    STATE.popupTitle         = cfg.popupTitle || app.getAttribute("data-popup-title") || "Daily Free Search Received";
     STATE.popupMessage       = cfg.popupMessage || app.getAttribute("data-popup-message") || "";
-    STATE.popupButtonText     = cfg.popupButtonText || app.getAttribute("data-popup-button") || "Join Membership Now";
+    STATE.popupButtonText     = cfg.popupButtonText || app.getAttribute("data-popup-button") || "Subscribe for More Searches";
     STATE.ajaxUrl            = cfg.ajaxUrl || "";
     STATE.nonce              = cfg.nonce || "";
 
@@ -487,8 +627,8 @@
     buildModal();
     buildMembershipModal();
 
-    // Start 24-hour reset countdown timer if on cooldown
-    if (!STATE.isMember && STATE.isLoggedIn && STATE.searchesLeft <= 0 && STATE.resetTimestamp > 0) {
+    // Start 24-hour reset countdown timer if on active cycle
+    if (!STATE.isUnlimited && STATE.resetTimestamp > 0) {
       startResetTimer();
     }
 
@@ -533,12 +673,16 @@
       var q = input.value.trim();
       if (!q) {
         // If empty input but limit reached or guest, show popup on button click
-        if (!STATE.isMember) {
+        if (!STATE.isUnlimited) {
           if (!STATE.isLoggedIn) {
             openMembershipModal("guest", "");
             return;
           }
-          if (STATE.searchesLeft <= 0) {
+          if (STATE.isMember && STATE.searchesLeft <= 0) {
+            openMembershipModal("member_limit_reached", "");
+            return;
+          }
+          if (!STATE.isMember && STATE.searchesLeft <= 0) {
             openMembershipModal("limit_reached", "");
             return;
           }
@@ -557,26 +701,38 @@
 
   /* ── Search Handler ── */
   function handleSearch(query) {
-    // 1. Check Membership / 24-Hour Search Limit Restrictions
-    if (!STATE.isMember) {
+    // 1. Check Restrictions
+    if (!STATE.isUnlimited) {
       // Guest: must log in or join
       if (!STATE.isLoggedIn) {
         openMembershipModal("guest", query);
         addMessage(escapeHtml(query), "user");
         addMessage(
-          "<p>🔒 <strong>Membership Required:</strong> Please <a href=\"" + escapeHtml(STATE.loginUrl) + "\">log in</a> to use your free daily search, or <a href=\"" + escapeHtml(STATE.membershipUrl) + "\">join our membership</a> for unlimited video searches.</p>",
+          "<p>🔒 <strong>Membership Required:</strong> Please <a href=\"" + escapeHtml(STATE.loginUrl) + "\">log in</a> to use your free daily search, or <a href=\"" + escapeHtml(STATE.membershipUrl) + "\">subscribe</a> for 10 daily searches.</p>",
           "bot"
         );
         return;
       }
 
-      // Logged-in non-member within 24-hour cooldown
-      if (STATE.searchesLeft <= 0) {
+      var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
+      var formatted = formatCountdown(remainingSec);
+      var exactText = STATE.resetTimeFormatted ? ' (at ' + escapeHtml(STATE.resetTimeFormatted) + ')' : "";
+
+      // Monthly member who has reached 10 daily searches
+      if (STATE.isMember && STATE.searchesLeft <= 0) {
+        openMembershipModal("member_limit_reached", query);
+        addMessage(escapeHtml(query), "user");
+        addMessage(
+          "<p>🔒 <strong>Daily Limit Reached:</strong> You have used all " + escapeHtml(String(STATE.memberLimit)) + " of your daily subscriber searches for today. Resets in <strong class=\"vsc-timer-display\">" + formatted + "</strong>" + exactText + ".</p>",
+          "bot"
+        );
+        return;
+      }
+
+      // Logged-in non-member who has reached 1 free search
+      if (!STATE.isMember && STATE.searchesLeft <= 0) {
         openMembershipModal("limit_reached", query);
         addMessage(escapeHtml(query), "user");
-        var remainingSec = Math.max(0, Math.floor((STATE.resetTimestamp - Date.now()) / 1000));
-        var formatted = formatCountdown(remainingSec);
-        var exactText = STATE.resetTimeFormatted ? ' (at ' + escapeHtml(STATE.resetTimeFormatted) + ')' : "";
         addMessage(
           "<p>🔒 <strong>Daily Free Search Used:</strong> You have received your daily free video search. Monthly Subscribers receive multiple daily searches. Resets in <strong class=\"vsc-timer-display\">" + formatted + "</strong>" + exactText + ". <a href=\"" + escapeHtml(STATE.membershipUrl) + "\" class=\"vsc-in-msg-btn\">Subscribe for More Searches &rarr;</a></p>",
           "bot"
@@ -584,10 +740,15 @@
         return;
       }
 
-      // First search for logged-in non-member in this 24h window: consume the search
-      STATE.searchesLeft = 0;
-      STATE.secondsUntilReset = STATE.periodHours * 3600;
-      STATE.resetTimestamp = Date.now() + (STATE.secondsUntilReset * 1000);
+      // Consume one search
+      STATE.searchesLeft = Math.max(0, STATE.searchesLeft - 1);
+      STATE.usedInCycle = (STATE.usedInCycle || 0) + 1;
+
+      if (!STATE.resetTimestamp || STATE.resetTimestamp <= Date.now()) {
+        STATE.secondsUntilReset = STATE.periodHours * 3600;
+        STATE.resetTimestamp = Date.now() + (STATE.secondsUntilReset * 1000);
+      }
+
       recordSearchUsage();
       updateBannerUI();
       startResetTimer();
