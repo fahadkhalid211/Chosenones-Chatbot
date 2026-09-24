@@ -50,9 +50,18 @@ no API keys, no per-search costs.
 6. For a true "full page" feel, use a blank/no-sidebar page template and
    place the shortcode as the only content on the page.
 
-== Updating the video data later ==
+== WordPress Media Library Integration & Auto-Training ==
 
-Whenever you add new videos to the Drive folder:
+The plugin automatically indexes all videos uploaded to your WordPress Media Library:
+- Automatic Detection: When you upload a video (`video/*`) in WP Admin (Media -> Add New Media), the plugin immediately detects it, reads its title, description/caption, and registers it into the chatbot knowledge base.
+- Admin Sync & Training Screen: Under Media -> Video Search Chat (`upload.php?page=video-search-chat`), you can see all detected WordPress videos, review indexed status, and trigger a one-click scan & train.
+- In-Browser Auto-Training: When new videos are uploaded, the visitor or admin browser running the chatbot automatically computes the 384-dimensional vector embeddings via Transformers.js (`Xenova/all-MiniLM-L6-v2`) and securely saves them back to WordPress cache (`wp-content/uploads/vsc-videos/media-library-videos.json`).
+- Native Playback: WordPress Media Library videos play instantly in the chatbot via a responsive HTML5 video player with poster preview, controls, and full-screen support.
+- Merged Search: Chatbot searches query both your Google Drive archive (`data.json`) and your native WordPress Media Library videos seamlessly!
+
+== Updating Google Drive video data ==
+
+Whenever you add new videos to the Google Drive folder:
 1. Re-run the pipeline script (it skips already-processed videos)
 2. Replace assets/data.json with the updated file
 3. No plugin re-activation needed — changes apply on next page load

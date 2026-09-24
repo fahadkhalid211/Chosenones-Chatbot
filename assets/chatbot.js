@@ -26,6 +26,7 @@
     popupButtonText: "Subscribe for More Searches",
     ajaxUrl: "",
     nonce: "",
+    mediaVideosUrl: "",
   };
 
   var THINKING_PHRASES = [
@@ -119,7 +120,7 @@
     STATE.timerInterval = setInterval(tick, 1000);
   }
 
-  /* ── Video Player Modal ── */
+  /* ── Video Player Modal (Supports Google Drive & WordPress Media Library HTML5) ── */
   function buildModal() {
     if ($("vsc-modal")) return;
 
@@ -136,7 +137,10 @@
 
     function closeModal() {
       overlay.classList.remove("vsc-modal-open");
-      $("vsc-modal-player").innerHTML = "";
+      var player = $("vsc-modal-player");
+      var activeVid = player ? player.querySelector("video") : null;
+      if (activeVid) activeVid.pause();
+      if (player) player.innerHTML = "";
     }
 
     $("vsc-modal-close").addEventListener("click", closeModal);
@@ -150,17 +154,41 @@
     });
   }
 
-  function openModal(fileId, title) {
+  function openModal(video, title) {
     buildModal();
-    $("vsc-modal-title").textContent = title || "";
-    var iframe = document.createElement("iframe");
-    iframe.src = "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview";
-    iframe.setAttribute("allow", "autoplay; fullscreen");
-    iframe.setAttribute("allowfullscreen", "");
-    iframe.setAttribute("frameborder", "0");
+
+    var vidTitle = (typeof video === "object" ? video.title : title) || "";
+    $("vsc-modal-title").textContent = vidTitle;
+
     var player = $("vsc-modal-player");
     player.innerHTML = "";
-    player.appendChild(iframe);
+
+    var videoUrl = (typeof video === "object" ? video.videoUrl : "") || "";
+    var isMediaLib = (typeof video === "object" && (video.source === "media_library" || Boolean(video.videoUrl)));
+    var fileId = typeof video === "object" ? video.id : video;
+
+    if (isMediaLib && videoUrl) {
+      // HTML5 video player for WordPress Media Library videos
+      var vid = document.createElement("video");
+      vid.src = videoUrl;
+      vid.controls = true;
+      vid.autoplay = true;
+      vid.playsInline = true;
+      vid.className = "vsc-player-video";
+      if (video.thumbUrl) {
+        vid.poster = video.thumbUrl;
+      }
+      player.appendChild(vid);
+    } else {
+      // Google Drive iframe preview for Drive library videos
+      var iframe = document.createElement("iframe");
+      iframe.src = "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview";
+      iframe.setAttribute("allow", "autoplay; fullscreen");
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.setAttribute("frameborder", "0");
+      player.appendChild(iframe);
+    }
+
     $("vsc-modal").classList.add("vsc-modal-open");
   }
 
@@ -280,7 +308,7 @@
         '</div>' +
         '<div class="vsc-perk">' +
           '<span class="vsc-perk-icon">&#10003;</span>' +
-          '<span><strong>Full access</strong> to Amato The Mentor\'s entire video library</span>' +
+          '<span><strong>Full access</strong> to all video teachings and library files</span>' +
         '</div>' +
         '<div class="vsc-perk">' +
           '<span class="vsc-perk-icon">&#10003;</span>' +
@@ -377,6 +405,41 @@
       .catch(function (err) {
         console.warn("VSC: Search recording notice:", err);
       });
+  }
+
+  /* ── Auto-Train & Embed New Media Library Videos on Frontend ── */
+  function autoTrainMediaVideos(items) {
+    if (!items.length || !STATE.extractor) return;
+
+    var batch = items.slice(0, 15); // process in gentle batches
+    var promises = batch.map(function (v) {
+      var text = (v.title || "") + ". " + (v.excerpt || "");
+      return STATE.extractor(text, { pooling: "mean", normalize: true }).then(function (out) {
+        v.embedding = Array.from(out.data);
+        return {
+          wpId: v.wpId,
+          id: v.id,
+          embedding: v.embedding,
+        };
+      });
+    });
+
+    Promise.all(promises).then(function (results) {
+      if (STATE.ajaxUrl && STATE.nonce && results.length) {
+        var params = new URLSearchParams();
+        params.append("action", "vsc_save_media_embeddings");
+        params.append("nonce", STATE.nonce);
+        params.append("items", JSON.stringify(results));
+
+        fetch(STATE.ajaxUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        }).catch(function (e) {
+          console.warn("VSC: Background auto-save notice:", e);
+        });
+      }
+    });
   }
 
   /* ── Update Banner Bar in DOM ── */
@@ -517,20 +580,29 @@
       card.className = "vsc-result";
       card.style.animationDelay = (i * 80) + "ms";
 
-      var thumbUrl = "https://drive.google.com/thumbnail?id=" + encodeURIComponent(r.id) + "&sz=w400";
+      var thumbUrl = r.thumbUrl;
+      if (!thumbUrl && r.id && !r.videoUrl) {
+        thumbUrl = "https://drive.google.com/thumbnail?id=" + encodeURIComponent(r.id) + "&sz=w400";
+      }
+
+      var sourceBadge = r.source === "media_library" ? '<div class="vsc-source-badge">Media Library</div>' : '';
 
       card.innerHTML =
         '<div class="vsc-thumb-wrap">' +
-          '<img class="vsc-thumb" src="' + thumbUrl + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' +
+          (thumbUrl
+            ? '<img class="vsc-thumb" src="' + thumbUrl + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
+            : '<div class="vsc-thumb-placeholder">🎬</div>'
+          ) +
           '<div class="vsc-play-btn">&#9654;</div>' +
           '<div class="vsc-score-badge">' + Math.round(r.score * 100) + '% match</div>' +
+          sourceBadge +
         '</div>' +
         '<div class="vsc-result-info">' +
           '<div class="vsc-result-title">' + escapeHtml(r.title || "Untitled") + '</div>' +
           '<div class="vsc-result-excerpt">' + escapeHtml((r.excerpt || "").slice(0, 100)) + (r.excerpt && r.excerpt.length > 100 ? "\u2026" : "") + '</div>' +
         '</div>';
 
-      card.addEventListener("click", function () { openModal(r.id, r.title); });
+      card.addEventListener("click", function () { openModal(r); });
       grid.appendChild(card);
     });
 
@@ -613,6 +685,7 @@
     STATE.popupButtonText     = cfg.popupButtonText || app.getAttribute("data-popup-button") || "Subscribe for More Searches";
     STATE.ajaxUrl            = cfg.ajaxUrl || "";
     STATE.nonce              = cfg.nonce || "";
+    STATE.mediaVideosUrl     = cfg.mediaVideosUrl || "";
 
     // Synchronize client reset timestamp using local clock delta to prevent skew
     if (STATE.secondsUntilReset > 0) {
@@ -632,19 +705,35 @@
       startResetTimer();
     }
 
-    setStatus("Loading video library...");
+    setStatus("Loading video libraries...");
 
-    var dataUrl = cfg.dataUrl || "assets/data.json";
-    fetch(dataUrl)
+    // 1. Fetch Google Drive video catalog
+    var loadDrive = fetch(cfg.dataUrl || "assets/data.json")
       .then(function (res) { return res.json(); })
-      .then(function (videos) {
-        STATE.videos = Array.isArray(videos) ? videos : [];
+      .catch(function () { return []; });
+
+    // 2. Fetch WordPress Media Library video catalog
+    var loadMedia = STATE.mediaVideosUrl
+      ? fetch(STATE.mediaVideosUrl)
+          .then(function (res) { return res.json(); })
+          .catch(function () { return []; })
+      : Promise.resolve([]);
+
+    // 3. Combine both catalogs into a unified knowledgebase
+    Promise.all([loadDrive, loadMedia])
+      .then(function (results) {
+        var driveVideos = Array.isArray(results[0]) ? results[0] : [];
+        var mediaVideos = Array.isArray(results[1]) ? results[1] : [];
+
+        STATE.videos = driveVideos.concat(mediaVideos);
+
         if (!STATE.videos.length) {
           setStatus("");
-          addMessage("<p>No video data loaded yet. Run the processing pipeline first.</p>", "bot");
+          addMessage("<p>No video data loaded yet. Add videos to your WordPress Media Library or Google Drive catalog.</p>", "bot");
           return;
         }
-        setStatus("Loading search model (first visit only, then cached)\u2026");
+
+        setStatus("Loading search model (cached on first visit)\u2026");
         return import("https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2")
           .then(function (mod) {
             return mod.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
@@ -655,6 +744,15 @@
         STATE.extractor = extractor;
         STATE.ready = true;
         setStatus("");
+
+        // Auto-train on any Media Library videos that don't have embeddings yet
+        var unindexed = STATE.videos.filter(function (v) {
+          return v.source === "media_library" && (!v.embedding || !v.embedding.length) && (v.title || v.excerpt);
+        });
+        if (unindexed.length > 0) {
+          autoTrainMediaVideos(unindexed);
+        }
+
         addMessage(
           "Hi! You can search all of \u201cAmato The Mentor\u2019s\u201d videos by meaning \u2014 not just keywords. " +
           "Try typing a topic like <em>\u201cfaith\u201d</em>, <em>\u201cforgiveness\u201d</em>, or <em>\u201cprayer\u201d</em>.",
@@ -768,9 +866,23 @@
     STATE.extractor(query, { pooling: "mean", normalize: true })
       .then(function (output) {
         var queryVec = Array.from(output.data);
-        var scored = STATE.videos.map(function (v) {
-          return { id: v.id, title: v.title, excerpt: v.excerpt, score: cosineSim(queryVec, v.embedding) };
-        });
+        var scored = [];
+
+        for (var i = 0; i < STATE.videos.length; i++) {
+          var v = STATE.videos[i];
+          if (!v.embedding || !v.embedding.length) continue;
+          scored.push({
+            id: v.id,
+            wpId: v.wpId,
+            title: v.title,
+            excerpt: v.excerpt,
+            videoUrl: v.videoUrl,
+            thumbUrl: v.thumbUrl,
+            source: v.source,
+            score: cosineSim(queryVec, v.embedding),
+          });
+        }
+
         scored.sort(function (a, b) { return b.score - a.score; });
         return { scored: scored };
       })
