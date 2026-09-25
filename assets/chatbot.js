@@ -702,26 +702,41 @@
         thumbUrl = "https://drive.google.com/thumbnail?id=" + encodeURIComponent(r.id) + "&sz=w400";
       }
 
-      var sourceBadge = r.source === "media_library" ? '<div class="vsc-source-badge">Media Library</div>' : '';
       var topicBadge = r.topics ? '<div class="vsc-result-topics">🏷️ ' + escapeHtml(r.topics) + '</div>' : '';
-
       var snippetHtml = r.snippet ? r.snippet : escapeHtml((r.excerpt || "").slice(0, 100)) + (r.excerpt && r.excerpt.length > 100 ? "\u2026" : "");
+
+      var thumbContent = "";
+      if (thumbUrl) {
+        thumbContent = '<img class="vsc-thumb" src="' + escapeHtml(thumbUrl) + '" alt="" loading="lazy"' +
+          (r.videoUrl ? ' onerror="this.style.display=\'none\'; if(this.nextElementSibling) this.nextElementSibling.style.display=\'block\';"' : '') + '>';
+        if (r.videoUrl) {
+          thumbContent += '<video class="vsc-thumb vsc-thumb-video" src="' + escapeHtml(r.videoUrl) + '#t=0.5" preload="metadata" muted playsinline style="display:none;"></video>';
+        }
+      } else if (r.videoUrl) {
+        // Native HTML5 video frame thumbnail at 0.5s
+        thumbContent = '<video class="vsc-thumb vsc-thumb-video" src="' + escapeHtml(r.videoUrl) + '#t=0.5" preload="metadata" muted playsinline></video>';
+      } else {
+        thumbContent = '<div class="vsc-thumb-placeholder">🎬</div>';
+      }
 
       card.innerHTML =
         '<div class="vsc-thumb-wrap">' +
-          (thumbUrl
-            ? '<img class="vsc-thumb" src="' + thumbUrl + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">'
-            : '<div class="vsc-thumb-placeholder">🎬</div>'
-          ) +
+          thumbContent +
           '<div class="vsc-play-btn">&#9654;</div>' +
           '<div class="vsc-score-badge">' + Math.round(r.score * 100) + '% match</div>' +
-          sourceBadge +
         '</div>' +
         '<div class="vsc-result-info">' +
           '<div class="vsc-result-title">' + escapeHtml(r.title || "Untitled") + '</div>' +
           topicBadge +
           '<div class="vsc-result-excerpt">' + snippetHtml + '</div>' +
         '</div>';
+
+      var videoThumb = card.querySelector("video.vsc-thumb-video");
+      if (videoThumb) {
+        videoThumb.addEventListener("loadedmetadata", function () {
+          try { this.currentTime = 0.5; } catch (e) {}
+        }, { once: true });
+      }
 
       card.addEventListener("click", function () { openModal(r); });
       grid.appendChild(card);

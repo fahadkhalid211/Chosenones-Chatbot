@@ -340,9 +340,25 @@ function vsc_get_all_media_videos($force_refresh = false) {
         $url   = wp_get_attachment_url($wp_id);
         if (!$url) continue;
 
-        $thumb = wp_get_attachment_image_url($wp_id, 'medium');
+        $thumb = '';
+        $thumb_id = get_post_meta($wp_id, '_thumbnail_id', true);
+        if ($thumb_id) {
+            $thumb = wp_get_attachment_image_url($thumb_id, 'medium');
+        }
         if (!$thumb) {
-            $thumb = wp_get_attachment_thumb_url($wp_id);
+            $custom_thumb = get_post_meta($wp_id, '_vsc_thumb_url', true);
+            if (!empty($custom_thumb)) {
+                $thumb = $custom_thumb;
+            }
+        }
+        if (!$thumb) {
+            $img = wp_get_attachment_image_url($wp_id, 'medium');
+            if (!$img) {
+                $img = wp_get_attachment_thumb_url($wp_id);
+            }
+            if ($img && strpos($img, 'images/media/video.') === false) {
+                $thumb = $img;
+            }
         }
 
         // Clean, readable title
@@ -521,6 +537,7 @@ function vsc_ajax_save_video_context() {
     $topics     = isset($_POST['topics']) ? sanitize_text_field(wp_unslash($_POST['topics'])) : '';
     $context    = isset($_POST['context']) ? wp_kses_post(wp_unslash($_POST['context'])) : '';
     $transcript = isset($_POST['transcript']) ? wp_kses_post(wp_unslash($_POST['transcript'])) : '';
+    $thumb_url  = isset($_POST['thumb_url']) ? esc_url_raw(wp_unslash($_POST['thumb_url'])) : '';
 
     if (!empty($title)) {
         wp_update_post([
@@ -532,6 +549,7 @@ function vsc_ajax_save_video_context() {
     update_post_meta($wp_id, '_vsc_topics', $topics);
     update_post_meta($wp_id, '_vsc_context', $context);
     update_post_meta($wp_id, '_vsc_transcript', $transcript);
+    update_post_meta($wp_id, '_vsc_thumb_url', $thumb_url);
 
     // Save embedding if provided
     if (!empty($_POST['embedding'])) {
@@ -716,12 +734,15 @@ function vsc_admin_dashboard_page() {
                             <tr id="vsc-row-<?php echo esc_attr($v['wpId']); ?>"
                                 data-id="<?php echo esc_attr($v['wpId']); ?>"
                                 data-title="<?php echo esc_attr($v['title']); ?>"
+                                data-thumb="<?php echo esc_attr($v['thumbUrl'] ?? ''); ?>"
                                 data-topics="<?php echo esc_attr($v['topics'] ?? ''); ?>"
                                 data-context="<?php echo esc_attr($v['context'] ?? ''); ?>"
                                 data-transcript="<?php echo esc_attr($v['transcript'] ?? ''); ?>">
                                 <td>
                                     <?php if (!empty($v['thumbUrl'])) : ?>
                                         <img src="<?php echo esc_url($v['thumbUrl']); ?>" style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px;" alt="">
+                                    <?php elseif (!empty($v['videoUrl'])) : ?>
+                                        <video src="<?php echo esc_url($v['videoUrl']); ?>#t=0.5" style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px; pointer-events: none;" preload="metadata" muted playsinline></video>
                                     <?php else : ?>
                                         <div style="width: 70px; height: 45px; background: #eee; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 20px;">🎬</div>
                                     <?php endif; ?>
@@ -776,8 +797,15 @@ function vsc_admin_dashboard_page() {
             <input type="hidden" id="vsc-modal-wpid" value="">
 
             <div style="margin-bottom: 14px;">
+            <div style="margin-bottom: 14px;">
                 <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Video Title</label>
                 <input type="text" id="vsc-modal-title" class="widefat" style="padding: 8px 12px; border-radius: 6px; font-size: 14px;">
+            </div>
+
+            <div style="margin-bottom: 14px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Thumbnail / Poster Image URL (optional)</label>
+                <input type="url" id="vsc-modal-thumb" class="widefat" placeholder="https://... (defaults to automatic video frame)" style="padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                <small style="color: #777;">Leave empty to automatically display the first frame of the video.</small>
             </div>
 
             <div style="margin-bottom: 14px;">
@@ -840,6 +868,7 @@ function vsc_admin_dashboard_page() {
 
                 document.getElementById("vsc-modal-wpid").value = wpId;
                 document.getElementById("vsc-modal-title").value = row.getAttribute("data-title") || "";
+                document.getElementById("vsc-modal-thumb").value = row.getAttribute("data-thumb") || "";
                 document.getElementById("vsc-modal-topics").value = row.getAttribute("data-topics") || "";
                 document.getElementById("vsc-modal-context").value = row.getAttribute("data-context") || "";
                 document.getElementById("vsc-modal-transcript").value = row.getAttribute("data-transcript") || "";
@@ -860,6 +889,7 @@ function vsc_admin_dashboard_page() {
             var saveBtn = this;
             var wpId = document.getElementById("vsc-modal-wpid").value;
             var title = document.getElementById("vsc-modal-title").value.trim();
+            var thumbUrl = document.getElementById("vsc-modal-thumb").value.trim();
             var topics = document.getElementById("vsc-modal-topics").value.trim();
             var context = document.getElementById("vsc-modal-context").value.trim();
             var transcript = document.getElementById("vsc-modal-transcript").value.trim();
@@ -886,6 +916,7 @@ function vsc_admin_dashboard_page() {
                 params.append("nonce", adminNonce);
                 params.append("wp_id", wpId);
                 params.append("title", title);
+                params.append("thumb_url", thumbUrl);
                 params.append("topics", topics);
                 params.append("context", context);
                 params.append("transcript", transcript);
