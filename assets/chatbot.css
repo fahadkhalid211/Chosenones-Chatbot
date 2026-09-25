@@ -203,6 +203,21 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.vsc-result-topics {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--vsc-primary);
+  background: #fbf2fb;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-bottom: 4px;
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 .vsc-result-excerpt {
   font-size: 11px;
   color: #888;

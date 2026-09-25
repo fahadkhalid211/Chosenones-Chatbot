@@ -241,18 +241,48 @@ function vsc_get_media_json_url() {
     $upload_dir = wp_upload_dir();
     $path = vsc_get_media_json_path();
     if (!file_exists($path)) {
-        vsc_sync_media_library_videos();
+        vsc_get_all_media_videos(true);
     }
     return trailingslashit($upload_dir['baseurl']) . 'vsc-videos/media-library-videos.json?v=' . (file_exists($path) ? filemtime($path) : time());
 }
 
 /**
- * Scan WordPress Media Library for all video attachments and sync catalog.
- * Preserves existing embeddings while indexing new or updated videos.
+ * Clean a video title for human readability and semantic relevance.
+ */
+function vsc_clean_video_title($title, $url = '') {
+    $raw = !empty($title) ? trim($title) : basename($url);
+    // Strip file extensions
+    $clean = preg_replace('/\.(mp4|mov|webm|mkv|m4v|avi|ogv)$/i', '', $raw);
+
+    // If machine filename like amatothementor_1735593678_7454318071726050606 or IMG_1234
+    if (preg_match('/^([a-zA-Z]+)[-_]\d+[-_]\d+/i', $clean, $m)) {
+        return ucwords($m[1]) . ' Video Lesson';
+    }
+
+    // Replace underscores and hyphens with spaces
+    $clean = preg_replace('/[-_]+/', ' ', $clean);
+    $clean = trim($clean);
+
+    return !empty($clean) ? ucwords($clean) : 'Video';
+}
+
+/**
+ * Retrieve all video attachments from WordPress Media Library.
+ * Compiles Title, Context, Topics, Description, Caption, and Transcript into a rich knowledgebase.
+ * Uses persistent transient caching for speed, updated automatically on changes.
  *
+ * @param bool $force_refresh Whether to bypass transient and force a full database rescan.
  * @return array Array of indexed video items.
  */
-function vsc_sync_media_library_videos() {
+function vsc_get_all_media_videos($force_refresh = false) {
+    $transient_key = 'vsc_media_videos_catalog';
+    if (!$force_refresh) {
+        $cached = get_transient($transient_key);
+        if (is_array($cached) && !empty($cached)) {
+            return $cached;
+        }
+    }
+
     $path = vsc_get_media_json_path();
     $existing_data = [];
 
@@ -267,15 +297,41 @@ function vsc_sync_media_library_videos() {
         }
     }
 
+    // Query all video attachments regardless of status
     $args = [
         'post_type'      => 'attachment',
         'post_mime_type' => 'video',
-        'post_status'    => 'inherit',
+        'post_status'    => 'any',
         'posts_per_page' => -1,
         'orderby'        => 'date',
         'order'          => 'DESC',
     ];
     $attachments = get_posts($args);
+
+    // Fallback: Also look for attachments with video file extensions
+    $video_exts = ['mp4', 'mov', 'webm', 'mkv', 'm4v'];
+    $extra_args = [
+        'post_type'      => 'attachment',
+        'post_status'    => 'any',
+        'posts_per_page' => 100,
+        'orderby'        => 'date',
+        'order'          => 'DESC',
+    ];
+    $all_atts = get_posts($extra_args);
+    $seen_ids = [];
+    foreach ($attachments as $att) {
+        $seen_ids[$att->ID] = true;
+    }
+    foreach ($all_atts as $att) {
+        if (!isset($seen_ids[$att->ID])) {
+            $att_url = wp_get_attachment_url($att->ID);
+            $ext = strtolower(pathinfo($att_url, PATHINFO_EXTENSION));
+            if (in_array($ext, $video_exts, true)) {
+                $attachments[] = $att;
+                $seen_ids[$att->ID] = true;
+            }
+        }
+    }
 
     $updated_list = [];
 
@@ -289,85 +345,233 @@ function vsc_sync_media_library_videos() {
             $thumb = wp_get_attachment_thumb_url($wp_id);
         }
 
+        // Clean, readable title
+        $title = vsc_clean_video_title($att->post_title, $url);
+
+        // Core context fields
         $caption     = trim($att->post_excerpt);
         $description = trim($att->post_content);
-        $custom_desc = trim(get_post_meta($wp_id, '_vsc_transcript', true));
-        if (!$custom_desc) {
-            $custom_desc = trim(get_post_meta($wp_id, 'transcript', true));
+        $context     = trim(get_post_meta($wp_id, '_vsc_context', true));
+        $topics      = trim(get_post_meta($wp_id, '_vsc_topics', true));
+        $transcript  = trim(get_post_meta($wp_id, '_vsc_transcript', true));
+        if (!$transcript) {
+            $transcript = trim(get_post_meta($wp_id, 'transcript', true));
         }
 
-        // Build rich excerpt for semantic search
-        $excerpt_parts = array_filter([$caption, $description, $custom_desc]);
-        $excerpt = !empty($excerpt_parts) ? implode(" \n", $excerpt_parts) : $att->post_title;
-        $clean_excerpt = wp_strip_all_tags($excerpt);
-        $title = !empty($att->post_title) ? $att->post_title : basename($url);
+        // Build rich semantic excerpt for AI understanding
+        $excerpt_parts = [];
+        if (!empty($title)) {
+            $excerpt_parts[] = $title;
+        }
+        if (!empty($topics)) {
+            $excerpt_parts[] = 'Topics: ' . $topics;
+        }
+        if (!empty($context)) {
+            $excerpt_parts[] = 'Context: ' . $context;
+        }
+        if (!empty($transcript)) {
+            $excerpt_parts[] = 'Transcript: ' . $transcript;
+        }
+        if (!empty($description)) {
+            $excerpt_parts[] = $description;
+        }
+        if (!empty($caption)) {
+            $excerpt_parts[] = $caption;
+        }
 
-        $existing  = isset($existing_data[$wp_id]) ? $existing_data[$wp_id] : null;
+        $clean_excerpt = !empty($excerpt_parts) ? wp_strip_all_tags(implode('. ', $excerpt_parts)) : $title;
+
+        // Retrieve existing embedding if valid 384-dimensional vector
         $embedding = null;
-
-        // If title and text haven't changed, reuse existing embedding
-        if ($existing && !empty($existing['embedding']) && $existing['title'] === $title && $existing['excerpt'] === $clean_excerpt) {
-            $embedding = $existing['embedding'];
-        } else {
-            // Check postmeta fallback
-            $meta_embed = get_post_meta($wp_id, '_vsc_embedding', true);
-            if (is_array($meta_embed) && count($meta_embed) === 384) {
-                $embedding = $meta_embed;
-            }
+        $meta_embed = get_post_meta($wp_id, '_vsc_embedding', true);
+        if (is_array($meta_embed) && count($meta_embed) === 384) {
+            $embedding = $meta_embed;
+        } elseif (isset($existing_data[$wp_id]) && !empty($existing_data[$wp_id]['embedding']) && is_array($existing_data[$wp_id]['embedding']) && count($existing_data[$wp_id]['embedding']) === 384) {
+            $embedding = $existing_data[$wp_id]['embedding'];
+            update_post_meta($wp_id, '_vsc_embedding', $embedding);
         }
 
         $updated_list[] = [
-            'id'        => 'wp_' . $wp_id,
-            'wpId'      => $wp_id,
-            'title'     => $title,
-            'excerpt'   => $clean_excerpt,
-            'videoUrl'  => $url,
-            'thumbUrl'  => $thumb ?: '',
-            'source'    => 'media_library',
-            'date'      => $att->post_date,
-            'mime'      => $att->post_mime_type,
-            'embedding' => $embedding,
+            'id'         => 'wp_' . $wp_id,
+            'wpId'       => $wp_id,
+            'title'      => $title,
+            'context'    => $context,
+            'topics'     => $topics,
+            'transcript' => $transcript,
+            'excerpt'    => $clean_excerpt,
+            'videoUrl'   => $url,
+            'thumbUrl'   => $thumb ?: '',
+            'source'     => 'media_library',
+            'date'       => $att->post_date,
+            'mime'       => $att->post_mime_type ?: 'video/mp4',
+            'embedding'  => $embedding,
         ];
     }
 
+    // Cache in transient for fast subsequent loads (12 hours)
+    set_transient($transient_key, $updated_list, 12 * HOUR_IN_SECONDS);
+
+    // Also update uploads JSON file as fallback
     file_put_contents($path, json_encode($updated_list, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
     return $updated_list;
 }
 
 /**
- * Automatically update video catalog whenever an attachment is added or edited.
+ * Resync media library videos and refresh catalog cache.
  */
-function vsc_handle_attachment_change($attachment_id) {
-    if (wp_attachment_is('video', $attachment_id)) {
-        vsc_sync_media_library_videos();
-    }
+function vsc_sync_media_library_videos() {
+    return vsc_get_all_media_videos(true);
 }
-add_action('add_attachment', 'vsc_handle_attachment_change');
-add_action('edit_attachment', 'vsc_handle_attachment_change');
 
 /**
- * Automatically remove video from catalog when deleted.
+ * Invalidate cached media catalog when attachments change.
  */
-function vsc_handle_attachment_delete($attachment_id) {
-    $path = vsc_get_media_json_path();
-    if (file_exists($path)) {
-        $data = json_decode(file_get_contents($path), true);
-        if (is_array($data)) {
-            $filtered = array_filter($data, function ($v) use ($attachment_id) {
-                return isset($v['wpId']) && intval($v['wpId']) !== intval($attachment_id);
-            });
-            file_put_contents($path, json_encode(array_values($filtered), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+function vsc_invalidate_media_catalog($attachment_id = 0) {
+    delete_transient('vsc_media_videos_catalog');
+    vsc_get_all_media_videos(true);
+}
+add_action('add_attachment', 'vsc_invalidate_media_catalog');
+add_action('edit_attachment', 'vsc_invalidate_media_catalog');
+add_action('attachment_updated', 'vsc_invalidate_media_catalog');
+add_action('wp_update_attachment_metadata', 'vsc_invalidate_media_catalog');
+add_action('delete_attachment', 'vsc_invalidate_media_catalog');
+
+/**
+ * Add custom fields to standard WordPress Media Library Edit screen.
+ */
+function vsc_attachment_fields_to_edit($form_fields, $post) {
+    if (!wp_attachment_is('video', $post)) {
+        return $form_fields;
+    }
+
+    $topics     = get_post_meta($post->ID, '_vsc_topics', true);
+    $context    = get_post_meta($post->ID, '_vsc_context', true);
+    $transcript = get_post_meta($post->ID, '_vsc_transcript', true);
+
+    $form_fields['vsc_topics'] = [
+        'label' => 'Chatbot Topics',
+        'input' => 'html',
+        'html'  => '<input type="text" class="widefat" name="attachments[' . $post->ID . '][vsc_topics]" value="' . esc_attr($topics) . '" placeholder="e.g. startup, seed funding, majority equity, failure">',
+        'helps' => 'Keywords and topics the AI chatbot uses to understand what this video teaches.',
+    ];
+
+    $form_fields['vsc_context'] = [
+        'label' => 'Chatbot Context & Summary',
+        'input' => 'html',
+        'html'  => '<textarea class="widefat" rows="3" name="attachments[' . $post->ID . '][vsc_context]" placeholder="What is discussed in this video? Provide key takeaways, questions answered, etc.">' . esc_textarea($context) . '</textarea>',
+        'helps' => 'Summary of what Amato explains in this video so the chatbot can match contextual questions.',
+    ];
+
+    $form_fields['vsc_transcript'] = [
+        'label' => 'Video Transcript',
+        'input' => 'html',
+        'html'  => '<textarea class="widefat" rows="4" name="attachments[' . $post->ID . '][vsc_transcript]" placeholder="Full or partial spoken transcript...">' . esc_textarea($transcript) . '</textarea>',
+        'helps' => 'Spoken words for deep AI semantic matching.',
+    ];
+
+    return $form_fields;
+}
+add_filter('attachment_fields_to_edit', 'vsc_attachment_fields_to_edit', 10, 2);
+
+function vsc_attachment_fields_to_save($post, $attachment) {
+    if (isset($attachment['vsc_topics'])) {
+        update_post_meta($post['ID'], '_vsc_topics', sanitize_text_field($attachment['vsc_topics']));
+    }
+    if (isset($attachment['vsc_context'])) {
+        update_post_meta($post['ID'], '_vsc_context', wp_kses_post($attachment['vsc_context']));
+    }
+    if (isset($attachment['vsc_transcript'])) {
+        update_post_meta($post['ID'], '_vsc_transcript', wp_kses_post($attachment['vsc_transcript']));
+    }
+    vsc_invalidate_media_catalog($post['ID']);
+    return $post;
+}
+add_filter('attachment_fields_to_save', 'vsc_attachment_fields_to_save', 10, 2);
+
+/**
+ * AJAX endpoint: Return all Media Library videos as JSON.
+ */
+function vsc_ajax_get_media_videos() {
+    $force = !empty($_GET['force']) || !empty($_POST['force']);
+    $videos = vsc_get_all_media_videos($force);
+    wp_send_json_success([
+        'videos' => $videos,
+        'count'  => count($videos),
+    ]);
+}
+add_action('wp_ajax_vsc_get_media_videos', 'vsc_ajax_get_media_videos');
+add_action('wp_ajax_nopriv_vsc_get_media_videos', 'vsc_ajax_get_media_videos');
+
+/**
+ * AJAX endpoint: Save Title, Context, Topics, and Transcript for a single video.
+ */
+function vsc_ajax_save_video_context() {
+    check_ajax_referer('vsc_admin_nonce', 'nonce');
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Permission denied'], 403);
+    }
+
+    $wp_id = isset($_POST['wp_id']) ? intval($_POST['wp_id']) : 0;
+    if (!$wp_id) {
+        wp_send_json_error(['message' => 'Invalid video ID']);
+    }
+
+    $title      = isset($_POST['title']) ? sanitize_text_field(wp_unslash($_POST['title'])) : '';
+    $topics     = isset($_POST['topics']) ? sanitize_text_field(wp_unslash($_POST['topics'])) : '';
+    $context    = isset($_POST['context']) ? wp_kses_post(wp_unslash($_POST['context'])) : '';
+    $transcript = isset($_POST['transcript']) ? wp_kses_post(wp_unslash($_POST['transcript'])) : '';
+
+    if (!empty($title)) {
+        wp_update_post([
+            'ID'         => $wp_id,
+            'post_title' => $title,
+        ]);
+    }
+
+    update_post_meta($wp_id, '_vsc_topics', $topics);
+    update_post_meta($wp_id, '_vsc_context', $context);
+    update_post_meta($wp_id, '_vsc_transcript', $transcript);
+
+    // Save embedding if provided
+    if (!empty($_POST['embedding'])) {
+        $embedding = json_decode(wp_unslash($_POST['embedding']), true);
+        if (is_array($embedding) && count($embedding) === 384) {
+            update_post_meta($wp_id, '_vsc_embedding', $embedding);
         }
     }
+
+    vsc_invalidate_media_catalog($wp_id);
+    $videos = vsc_get_all_media_videos(true);
+
+    $updated_item = null;
+    foreach ($videos as $v) {
+        if ($v['wpId'] === $wp_id) {
+            $updated_item = $v;
+            break;
+        }
+    }
+
+    wp_send_json_success([
+        'video'   => $updated_item,
+        'message' => 'Video context and knowledge saved successfully.',
+    ]);
 }
-add_action('delete_attachment', 'vsc_handle_attachment_delete');
+add_action('wp_ajax_vsc_save_video_context', 'vsc_ajax_save_video_context');
 
 /**
  * AJAX endpoint to save embeddings generated by the browser for Media Library videos.
  */
 function vsc_ajax_save_media_embeddings() {
-    check_ajax_referer('vsc_search_nonce', 'nonce');
+    $nonce = isset($_POST['nonce']) ? $_POST['nonce'] : '';
+    $valid_search = wp_verify_nonce($nonce, 'vsc_search_nonce');
+    $valid_admin  = wp_verify_nonce($nonce, 'vsc_admin_nonce');
+
+    if (!$valid_search && !$valid_admin) {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Invalid nonce or permission denied'], 403);
+        }
+    }
 
     $raw = isset($_POST['items']) ? wp_unslash($_POST['items']) : '';
     $items = json_decode($raw, true);
@@ -376,29 +580,16 @@ function vsc_ajax_save_media_embeddings() {
         wp_send_json_error(['message' => 'No items provided']);
     }
 
-    $path = vsc_get_media_json_path();
-    $current = file_exists($path) ? json_decode(file_get_contents($path), true) : [];
-    if (!is_array($current)) {
-        $current = [];
-    }
-
     $map = [];
     foreach ($items as $it) {
-        if (!empty($it['wpId']) && !empty($it['embedding']) && is_array($it['embedding'])) {
+        if (!empty($it['wpId']) && !empty($it['embedding']) && is_array($it['embedding']) && count($it['embedding']) === 384) {
             $wp_id = intval($it['wpId']);
             $map[$wp_id] = $it['embedding'];
             update_post_meta($wp_id, '_vsc_embedding', $it['embedding']);
         }
     }
 
-    foreach ($current as &$v) {
-        if (!empty($v['wpId']) && isset($map[intval($v['wpId'])])) {
-            $v['embedding'] = $map[intval($v['wpId'])];
-        }
-    }
-
-    file_put_contents($path, json_encode($current, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-
+    vsc_invalidate_media_catalog();
     wp_send_json_success(['saved_count' => count($map)]);
 }
 add_action('wp_ajax_vsc_save_media_embeddings', 'vsc_ajax_save_media_embeddings');
@@ -413,7 +604,7 @@ function vsc_ajax_sync_media_videos() {
         wp_send_json_error(['message' => 'Permission denied'], 403);
     }
 
-    $videos = vsc_sync_media_library_videos();
+    $videos = vsc_get_all_media_videos(true);
     wp_send_json_success([
         'videos' => $videos,
         'count'  => count($videos),
@@ -442,7 +633,7 @@ add_action('admin_menu', 'vsc_admin_menu');
  * Render Admin Dashboard Page for Media Library Video Management.
  */
 function vsc_admin_dashboard_page() {
-    $videos = vsc_sync_media_library_videos();
+    $videos = vsc_get_all_media_videos(true);
     $total_media = count($videos);
     $trained_count = 0;
     foreach ($videos as $v) {
@@ -456,10 +647,10 @@ function vsc_admin_dashboard_page() {
     ?>
     <div class="wrap vsc-admin-wrap">
         <h1 class="vsc-admin-heading">
-            <span class="dashicons dashicons-format-video"></span> Video Search Chat Knowledgebase
+            <span class="dashicons dashicons-format-video"></span> Video Search Chat Knowledgebase &amp; Training
         </h1>
         <p class="vsc-admin-sub">
-            The chatbot automatically scans all videos in your WordPress Media Library, generates AI embeddings (training), and includes them in search answers.
+            Manage your video knowledgebase. The AI chatbot automatically learns from video titles, topics, context, and transcripts to provide intelligent answers to user questions.
         </p>
 
         <!-- Stats Cards -->
@@ -469,31 +660,31 @@ function vsc_admin_dashboard_page() {
                 <div class="vsc-stat-label">Media Library Videos</div>
             </div>
             <div class="vsc-stat-card">
-                <div class="vsc-stat-num vsc-text-green"><?php echo esc_html($trained_count); ?></div>
+                <div class="vsc-stat-num vsc-text-green" id="vsc-stat-trained"><?php echo esc_html($trained_count); ?></div>
                 <div class="vsc-stat-label">Trained &amp; Searchable</div>
             </div>
             <div class="vsc-stat-card">
-                <div class="vsc-stat-num <?php echo $untrained_count > 0 ? 'vsc-text-orange' : ''; ?>">
+                <div class="vsc-stat-num <?php echo $untrained_count > 0 ? 'vsc-text-orange' : ''; ?>" id="vsc-stat-untrained">
                     <?php echo esc_html($untrained_count); ?>
                 </div>
                 <div class="vsc-stat-label">Needing Training</div>
             </div>
             <div class="vsc-stat-card">
                 <div class="vsc-stat-num">665</div>
-                <div class="vsc-stat-label">Google Drive Library</div>
+                <div class="vsc-stat-label">Google Drive Archive</div>
             </div>
         </div>
 
         <!-- Sync & Training Actions -->
         <div class="vsc-action-box">
-            <h2>⚡ Video Knowledgebase &amp; AI Training</h2>
+            <h2>⚡ AI Training &amp; Video Knowledgebase</h2>
             <p>
-                Whenever you upload a video in <strong>Media &rarr; Add New</strong>, Video Search Chat automatically registers it. 
-                Click below to index and generate AI embeddings for all Media Library videos right now.
+                When you add new videos in <strong>Media &rarr; Add New</strong>, they are automatically detected here. 
+                You can add context and topics to each video below, or click <strong>Scan &amp; Train on All Videos</strong> to generate 384-dimensional vector embeddings so the chatbot understands them immediately.
             </p>
             <div class="vsc-btn-row">
                 <button type="button" id="vsc-start-training" class="button button-primary button-hero">
-                    ⚡ Scan &amp; Train on Media Library Videos
+                    ⚡ Scan &amp; Train on All Media Library Videos
                 </button>
             </div>
             <div id="vsc-progress-wrap" style="display: none; margin-top: 15px;">
@@ -511,10 +702,10 @@ function vsc_admin_dashboard_page() {
                 <thead>
                     <tr>
                         <th style="width: 80px;">Thumbnail</th>
-                        <th>Video Title</th>
-                        <th>Excerpt / Caption</th>
-                        <th>Date Uploaded</th>
-                        <th>Training Status</th>
+                        <th style="width: 28%;">Video Title</th>
+                        <th>Context &amp; Key Topics</th>
+                        <th style="width: 140px;">Training Status</th>
+                        <th style="width: 170px;">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="vsc-video-tbody">
@@ -522,7 +713,12 @@ function vsc_admin_dashboard_page() {
                         <tr><td colspan="5">No video attachments found in your Media Library yet. Upload an MP4 video in Media &rarr; Add New!</td></tr>
                     <?php else : ?>
                         <?php foreach ($videos as $v) : ?>
-                            <tr>
+                            <tr id="vsc-row-<?php echo esc_attr($v['wpId']); ?>"
+                                data-id="<?php echo esc_attr($v['wpId']); ?>"
+                                data-title="<?php echo esc_attr($v['title']); ?>"
+                                data-topics="<?php echo esc_attr($v['topics'] ?? ''); ?>"
+                                data-context="<?php echo esc_attr($v['context'] ?? ''); ?>"
+                                data-transcript="<?php echo esc_attr($v['transcript'] ?? ''); ?>">
                                 <td>
                                     <?php if (!empty($v['thumbUrl'])) : ?>
                                         <img src="<?php echo esc_url($v['thumbUrl']); ?>" style="width: 70px; height: 45px; object-fit: cover; border-radius: 4px;" alt="">
@@ -531,23 +727,82 @@ function vsc_admin_dashboard_page() {
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <strong><?php echo esc_html($v['title']); ?></strong><br>
-                                    <small><a href="<?php echo esc_url($v['videoUrl']); ?>" target="_blank">View File</a> | <a href="<?php echo esc_url(get_edit_post_link($v['wpId'])); ?>">Edit Details</a></small>
+                                    <strong class="vsc-title-display"><?php echo esc_html($v['title']); ?></strong><br>
+                                    <small><a href="<?php echo esc_url($v['videoUrl']); ?>" target="_blank">View Video File</a> | <a href="<?php echo esc_url(get_edit_post_link($v['wpId'])); ?>">WP Edit Screen</a></small>
                                 </td>
-                                <td><?php echo esc_html(mb_strimwidth($v['excerpt'], 0, 100, '...')); ?></td>
-                                <td><?php echo esc_html(date_i18n(get_option('date_format'), strtotime($v['date']))); ?></td>
                                 <td>
+                                    <?php if (!empty($v['topics'])) : ?>
+                                        <div style="margin-bottom: 4px;">
+                                            <span style="font-size: 11px; background: #f3e8f3; color: #720971; padding: 2px 7px; border-radius: 10px; font-weight: 600;">
+                                                🏷️ <?php echo esc_html($v['topics']); ?>
+                                            </span>
+                                        </div>
+                                    <?php endif; ?>
+                                    <div class="vsc-excerpt-display" style="font-size: 13px; color: #444; line-height: 1.4;">
+                                        <?php echo esc_html(mb_strimwidth($v['excerpt'], 0, 140, '...')); ?>
+                                    </div>
+                                </td>
+                                <td class="vsc-status-cell">
                                     <?php if (!empty($v['embedding'])) : ?>
                                         <span class="vsc-badge vsc-badge-trained">✓ Trained &amp; Ready</span>
                                     <?php else : ?>
                                         <span class="vsc-badge vsc-badge-untrained">⚡ Needs Training</span>
                                     <?php endif; ?>
                                 </td>
+                                <td>
+                                    <button type="button" class="button button-secondary vsc-btn-edit-context" data-id="<?php echo esc_attr($v['wpId']); ?>">
+                                        ✏️ Edit Context
+                                    </button>
+                                    <button type="button" class="button button-small vsc-btn-single-train" data-id="<?php echo esc_attr($v['wpId']); ?>" style="margin-top: 4px;">
+                                        ⚡ Train
+                                    </button>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+    </div>
+
+    <!-- Edit Context Modal -->
+    <div id="vsc-edit-modal" style="display: none; position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: #fff; width: 100%; max-width: 580px; border-radius: 12px; padding: 26px; box-shadow: 0 20px 40px rgba(0,0,0,0.25); position: relative; max-height: 90vh; overflow-y: auto;">
+            <button type="button" id="vsc-modal-close-btn" style="position: absolute; top: 16px; right: 16px; border: none; background: #eee; border-radius: 50%; width: 32px; height: 32px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;">&times;</button>
+            <h2 style="margin-top: 0; color: #580758; font-size: 20px;">✏️ Edit Video Context &amp; Knowledge</h2>
+            <p style="font-size: 13px; color: #666; margin-bottom: 18px;">
+                Tell the chatbot what this video is about. Adding topics and key context helps the AI accurately understand and return this video when visitors ask questions.
+            </p>
+            <input type="hidden" id="vsc-modal-wpid" value="">
+
+            <div style="margin-bottom: 14px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Video Title</label>
+                <input type="text" id="vsc-modal-title" class="widefat" style="padding: 8px 12px; border-radius: 6px; font-size: 14px;">
+            </div>
+
+            <div style="margin-bottom: 14px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Topics &amp; Keywords (comma-separated)</label>
+                <input type="text" id="vsc-modal-topics" class="widefat" placeholder="e.g. startup, seed capital, majority ownership, investor negotiation" style="padding: 8px 12px; border-radius: 6px; font-size: 13px;">
+                <small style="color: #777;">Keywords that users might ask about this video.</small>
+            </div>
+
+            <div style="margin-bottom: 14px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Context &amp; Summary (What Amato explains)</label>
+                <textarea id="vsc-modal-context" class="widefat" rows="3" placeholder="Provide a summary of the advice, questions answered, and core message in this video..." style="padding: 8px 12px; border-radius: 6px; font-size: 13px;"></textarea>
+            </div>
+
+            <div style="margin-bottom: 18px;">
+                <label style="display: block; font-weight: 600; margin-bottom: 5px; font-size: 13px;">Spoken Transcript (optional)</label>
+                <textarea id="vsc-modal-transcript" class="widefat" rows="3" placeholder="Full or partial spoken transcript for deep word-for-word matching..." style="padding: 8px 12px; border-radius: 6px; font-size: 13px;"></textarea>
+            </div>
+
+            <div style="display: flex; gap: 10px; align-items: center; justify-content: flex-end;">
+                <button type="button" id="vsc-modal-cancel" class="button">Cancel</button>
+                <button type="button" id="vsc-modal-save" class="button button-primary" style="background: #720971; border-color: #580758; font-weight: 600; padding: 6px 18px;">
+                    ⚡ Save &amp; Train Video
+                </button>
+            </div>
+            <p id="vsc-modal-status" style="margin-top: 10px; font-size: 13px; font-weight: 600; text-align: right; display: none;"></p>
         </div>
     </div>
 
@@ -561,14 +816,159 @@ function vsc_admin_dashboard_page() {
         var progWrap = document.getElementById("vsc-progress-wrap");
         var progBar = document.getElementById("vsc-progress-bar");
         var progStatus = document.getElementById("vsc-progress-status");
+        var editModal = document.getElementById("vsc-edit-modal");
+        var globalExtractor = null;
 
+        function getExtractor() {
+            if (globalExtractor) return Promise.resolve(globalExtractor);
+            return import("https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2")
+                .then(function(mod) {
+                    return mod.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+                })
+                .then(function(ext) {
+                    globalExtractor = ext;
+                    return ext;
+                });
+        }
+
+        // Modal Open / Close
+        document.querySelectorAll(".vsc-btn-edit-context").forEach(function(btn) {
+            btn.addEventListener("click", function() {
+                var wpId = this.getAttribute("data-id");
+                var row = document.getElementById("vsc-row-" + wpId);
+                if (!row) return;
+
+                document.getElementById("vsc-modal-wpid").value = wpId;
+                document.getElementById("vsc-modal-title").value = row.getAttribute("data-title") || "";
+                document.getElementById("vsc-modal-topics").value = row.getAttribute("data-topics") || "";
+                document.getElementById("vsc-modal-context").value = row.getAttribute("data-context") || "";
+                document.getElementById("vsc-modal-transcript").value = row.getAttribute("data-transcript") || "";
+                document.getElementById("vsc-modal-status").style.display = "none";
+
+                editModal.style.display = "flex";
+            });
+        });
+
+        function closeModal() {
+            editModal.style.display = "none";
+        }
+        document.getElementById("vsc-modal-close-btn").addEventListener("click", closeModal);
+        document.getElementById("vsc-modal-cancel").addEventListener("click", closeModal);
+
+        // Modal Save & Train
+        document.getElementById("vsc-modal-save").addEventListener("click", function() {
+            var saveBtn = this;
+            var wpId = document.getElementById("vsc-modal-wpid").value;
+            var title = document.getElementById("vsc-modal-title").value.trim();
+            var topics = document.getElementById("vsc-modal-topics").value.trim();
+            var context = document.getElementById("vsc-modal-context").value.trim();
+            var transcript = document.getElementById("vsc-modal-transcript").value.trim();
+            var statusEl = document.getElementById("vsc-modal-status");
+
+            saveBtn.disabled = true;
+            statusEl.style.display = "block";
+            statusEl.style.color = "#720971";
+            statusEl.textContent = "Generating AI Embedding...";
+
+            // Rich text for embedding
+            var fullText = [title, topics ? "Topics: " + topics : "", context ? "Context: " + context : "", transcript ? "Transcript: " + transcript : ""]
+                .filter(Boolean)
+                .join(". ");
+
+            getExtractor().then(function(extractor) {
+                return extractor(fullText, { pooling: "mean", normalize: true });
+            }).then(function(out) {
+                var embedding = Array.from(out.data);
+                statusEl.textContent = "Saving to WordPress...";
+
+                var params = new URLSearchParams();
+                params.append("action", "vsc_save_video_context");
+                params.append("nonce", adminNonce);
+                params.append("wp_id", wpId);
+                params.append("title", title);
+                params.append("topics", topics);
+                params.append("context", context);
+                params.append("transcript", transcript);
+                params.append("embedding", JSON.stringify(embedding));
+
+                return fetch(ajaxUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: params.toString()
+                }).then(function(res) { return res.json(); });
+            }).then(function(data) {
+                if (data && data.success) {
+                    statusEl.style.color = "#108a38";
+                    statusEl.textContent = "✓ Successfully saved & trained!";
+                    setTimeout(function() {
+                        closeModal();
+                        location.reload();
+                    }, 800);
+                } else {
+                    throw new Error(data && data.data && data.data.message ? data.data.message : "Save failed");
+                }
+            }).catch(function(err) {
+                statusEl.style.color = "#dc2626";
+                statusEl.textContent = "Error: " + err.message;
+                saveBtn.disabled = false;
+            });
+        });
+
+        // Single Train Button
+        document.querySelectorAll(".vsc-btn-single-train").forEach(function(btn) {
+            btn.addEventListener("click", function() {
+                var trainSingleBtn = this;
+                var wpId = trainSingleBtn.getAttribute("data-id");
+                var row = document.getElementById("vsc-row-" + wpId);
+                if (!row) return;
+
+                trainSingleBtn.disabled = true;
+                trainSingleBtn.textContent = "Training...";
+
+                var title = row.getAttribute("data-title") || "";
+                var topics = row.getAttribute("data-topics") || "";
+                var context = row.getAttribute("data-context") || "";
+                var transcript = row.getAttribute("data-transcript") || "";
+
+                var fullText = [title, topics ? "Topics: " + topics : "", context ? "Context: " + context : "", transcript ? "Transcript: " + transcript : ""]
+                    .filter(Boolean)
+                    .join(". ");
+
+                getExtractor().then(function(extractor) {
+                    return extractor(fullText, { pooling: "mean", normalize: true });
+                }).then(function(out) {
+                    var embedding = Array.from(out.data);
+                    var saveParams = new URLSearchParams();
+                    saveParams.append("action", "vsc_save_media_embeddings");
+                    saveParams.append("nonce", searchNonce);
+                    saveParams.append("items", JSON.stringify([{ wpId: parseInt(wpId, 10), embedding: embedding }]));
+
+                    return fetch(ajaxUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                        body: saveParams.toString()
+                    }).then(function(res) { return res.json(); });
+                }).then(function() {
+                    trainSingleBtn.textContent = "✓ Done";
+                    var statusCell = row.querySelector(".vsc-status-cell");
+                    if (statusCell) {
+                        statusCell.innerHTML = '<span class="vsc-badge vsc-badge-trained">✓ Trained &amp; Ready</span>';
+                    }
+                }).catch(function(err) {
+                    alert("Training error: " + err.message);
+                    trainSingleBtn.disabled = false;
+                    trainSingleBtn.textContent = "⚡ Train";
+                });
+            });
+        });
+
+        // Bulk Scan & Train All Videos
         trainBtn.addEventListener("click", function() {
             trainBtn.disabled = true;
             progWrap.style.display = "block";
             progBar.style.width = "5%";
             progStatus.textContent = "Scanning Media Library videos...";
 
-            // 1. Fetch latest videos from Media Library
             var params = new URLSearchParams();
             params.append("action", "vsc_sync_media_videos");
             params.append("nonce", adminNonce);
@@ -596,55 +996,53 @@ function vsc_admin_dashboard_page() {
                 progStatus.textContent = "Loading AI Search Model (Transformers.js)...";
                 progBar.style.width = "15%";
 
-                return import("https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2")
-                    .then(function(mod) {
-                        return mod.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
-                    })
-                    .then(function(extractor) {
-                        var total = unindexed.length;
-                        var current = 0;
-                        var results = [];
+                return getExtractor().then(function(extractor) {
+                    var total = unindexed.length;
+                    var current = 0;
+                    var results = [];
 
-                        function processNext() {
-                            if (current >= total) {
-                                // Save all embeddings to WordPress
-                                progStatus.textContent = "Saving trained embeddings to WordPress...";
-                                var saveParams = new URLSearchParams();
-                                saveParams.append("action", "vsc_save_media_embeddings");
-                                saveParams.append("nonce", searchNonce);
-                                saveParams.append("items", JSON.stringify(results));
+                    function processNext() {
+                        if (current >= total) {
+                            progStatus.textContent = "Saving trained embeddings to WordPress...";
+                            var saveParams = new URLSearchParams();
+                            saveParams.append("action", "vsc_save_media_embeddings");
+                            saveParams.append("nonce", searchNonce);
+                            saveParams.append("items", JSON.stringify(results));
 
-                                return fetch(ajaxUrl, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                                    body: saveParams.toString()
-                                })
-                                .then(function(res) { return res.json(); })
-                                .then(function() {
-                                    progBar.style.width = "100%";
-                                    progStatus.textContent = "✓ Training Complete! Successfully trained and saved " + total + " videos. Reloading...";
-                                    setTimeout(function() { location.reload(); }, 1200);
-                                });
-                            }
-
-                            var item = unindexed[current];
-                            var text = (item.title || "") + ". " + (item.excerpt || "");
-                            progStatus.textContent = "Training video " + (current + 1) + " of " + total + ": \"" + item.title + "\"...";
-                            progBar.style.width = Math.round(15 + ((current / total) * 80)) + "%";
-
-                            return extractor(text, { pooling: "mean", normalize: true }).then(function(out) {
-                                results.push({
-                                    wpId: item.wpId,
-                                    id: item.id,
-                                    embedding: Array.from(out.data)
-                                });
-                                current++;
-                                return processNext();
+                            return fetch(ajaxUrl, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                                body: saveParams.toString()
+                            })
+                            .then(function(res) { return res.json(); })
+                            .then(function() {
+                                progBar.style.width = "100%";
+                                progStatus.textContent = "✓ Training Complete! Successfully trained " + total + " videos. Reloading...";
+                                setTimeout(function() { location.reload(); }, 1200);
                             });
                         }
 
-                        return processNext();
-                    });
+                        var item = unindexed[current];
+                        var text = [item.title, item.topics ? "Topics: " + item.topics : "", item.context ? "Context: " + item.context : "", item.excerpt ? item.excerpt : ""]
+                            .filter(Boolean)
+                            .join(". ");
+
+                        progStatus.textContent = "Training video " + (current + 1) + " of " + total + ": \"" + item.title + "\"...";
+                        progBar.style.width = Math.round(15 + ((current / total) * 80)) + "%";
+
+                        return extractor(text, { pooling: "mean", normalize: true }).then(function(out) {
+                            results.push({
+                                wpId: item.wpId,
+                                id: item.id,
+                                embedding: Array.from(out.data)
+                            });
+                            current++;
+                            return processNext();
+                        });
+                    }
+
+                    return processNext();
+                });
             })
             .catch(function(err) {
                 progStatus.textContent = "Error during training: " + err.message;
@@ -700,6 +1098,7 @@ function vsc_enqueue_assets($config = []) {
     $default_config = [
         'dataUrl'             => VSC_PLUGIN_URL . 'assets/data.json?v=' . VSC_VERSION,
         'mediaVideosUrl'      => vsc_get_media_json_url(),
+        'mediaVideos'         => vsc_get_all_media_videos(),
         'ajaxUrl'             => admin_url('admin-ajax.php'),
         'nonce'               => wp_create_nonce('vsc_search_nonce'),
         'isLoggedIn'          => false,
@@ -794,6 +1193,7 @@ function vsc_shortcode($atts) {
     vsc_enqueue_assets([
         'dataUrl'             => VSC_PLUGIN_URL . 'assets/data.json?v=' . VSC_VERSION,
         'mediaVideosUrl'      => vsc_get_media_json_url(),
+        'mediaVideos'         => vsc_get_all_media_videos(),
         'ajaxUrl'             => admin_url('admin-ajax.php'),
         'nonce'               => wp_create_nonce('vsc_search_nonce'),
         'isLoggedIn'          => $is_logged_in,

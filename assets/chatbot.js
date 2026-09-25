@@ -407,25 +407,44 @@
       });
   }
 
+  /* ── Build Video Training Text from Title, Topics, Context, Excerpt ── */
+  function buildVideoTrainingText(v) {
+    var parts = [];
+    if (v.title) parts.push(v.title);
+    if (v.topics) parts.push("Topics: " + v.topics);
+    if (v.context) parts.push("Context: " + v.context);
+    if (v.transcript) parts.push("Transcript: " + v.transcript);
+    if (v.excerpt && v.excerpt !== v.title && (!v.context || v.excerpt.indexOf(v.context) === -1)) {
+      parts.push(v.excerpt);
+    }
+    return parts.filter(Boolean).join(". ");
+  }
+
   /* ── Auto-Train & Embed New Media Library Videos on Frontend ── */
   function autoTrainMediaVideos(items) {
     if (!items.length || !STATE.extractor) return;
 
-    var batch = items.slice(0, 15); // process in gentle batches
+    var batch = items.slice(0, 20);
+    var results = [];
+
     var promises = batch.map(function (v) {
-      var text = (v.title || "") + ". " + (v.excerpt || "");
-      return STATE.extractor(text, { pooling: "mean", normalize: true }).then(function (out) {
-        v.embedding = Array.from(out.data);
-        return {
-          wpId: v.wpId,
-          id: v.id,
-          embedding: v.embedding,
-        };
-      });
+      var text = buildVideoTrainingText(v);
+      return STATE.extractor(text, { pooling: "mean", normalize: true })
+        .then(function (out) {
+          v.embedding = Array.from(out.data);
+          results.push({
+            wpId: v.wpId,
+            id: v.id,
+            embedding: v.embedding,
+          });
+        })
+        .catch(function (e) {
+          console.warn("VSC: Video embedding error:", e);
+        });
     });
 
-    Promise.all(promises).then(function (results) {
-      if (STATE.ajaxUrl && STATE.nonce && results.length) {
+    Promise.all(promises).then(function () {
+      if (STATE.ajaxUrl && results.length) {
         var params = new URLSearchParams();
         params.append("action", "vsc_save_media_embeddings");
         params.append("nonce", STATE.nonce);
@@ -558,6 +577,104 @@
     return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-8);
   }
 
+  /* ── Stopwords for Context Tokenization ── */
+  var STOPWORDS = [
+    "what", "is", "are", "was", "were", "the", "a", "an", "and", "or", "in", "on", "at",
+    "to", "for", "with", "by", "of", "about", "how", "do", "does", "did", "can", "could",
+    "should", "would", "he", "she", "it", "they", "we", "you", "i", "me", "my", "your",
+    "his", "her", "their", "our", "say", "says", "said", "talk", "talks", "talking",
+    "tell", "tells", "telling", "video", "videos", "lesson", "mentor", "amato", "there",
+    "here", "when", "where", "why", "who", "which", "give", "gives", "look", "looks"
+  ];
+
+  function tokenize(str) {
+    if (!str) return [];
+    var words = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/);
+    return words.filter(function (w) {
+      return w.length > 2 && STOPWORDS.indexOf(w) === -1;
+    });
+  }
+
+  /* ── Calculate Contextual Keyword Relevance ── */
+  function calculateContextRelevance(query, v) {
+    var qWords = tokenize(query);
+    if (!qWords.length) return 0;
+
+    var title = (v.title || "").toLowerCase();
+    var topics = (v.topics || "").toLowerCase();
+    var context = (v.context || "").toLowerCase();
+    var transcript = (v.transcript || "").toLowerCase();
+    var excerpt = (v.excerpt || "").toLowerCase();
+
+    var fullContext = [title, topics, context, transcript, excerpt].join(" ");
+    var cleanQuery = query.toLowerCase().trim();
+
+    var score = 0;
+
+    // 1. Exact phrase match in full context
+    if (cleanQuery.length > 4 && fullContext.indexOf(cleanQuery) !== -1) {
+      score += 0.45;
+    }
+
+    // 2. Keyword match in Title (heavy weight)
+    var titleMatches = 0;
+    qWords.forEach(function (w) {
+      if (title.indexOf(w) !== -1) titleMatches++;
+    });
+    score += (titleMatches / qWords.length) * 0.35;
+
+    // 3. Keyword match in Topics
+    if (topics) {
+      var topicMatches = 0;
+      qWords.forEach(function (w) {
+        if (topics.indexOf(w) !== -1) topicMatches++;
+      });
+      score += (topicMatches / qWords.length) * 0.35;
+    }
+
+    // 4. Keyword match in Context / Excerpt / Transcript
+    var bodyMatches = 0;
+    qWords.forEach(function (w) {
+      if (fullContext.indexOf(w) !== -1) bodyMatches++;
+    });
+    score += (bodyMatches / qWords.length) * 0.25;
+
+    return Math.min(1.0, score);
+  }
+
+  /* ── Extract Best Context Snippet Answering Query ── */
+  function extractContextSnippet(query, video) {
+    var text = (video.context ? video.context + ". " : "") + (video.excerpt || "") + (video.topics ? " [Topics: " + video.topics + "]" : "");
+    if (!text) return escapeHtml(video.title || "Video Lesson");
+
+    text = text.replace(/\s+/g, " ").trim();
+    var sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+    var qWords = tokenize(query);
+
+    var bestSentence = "";
+    var bestScore = -1;
+
+    sentences.forEach(function (s) {
+      var sClean = s.trim();
+      if (!sClean || sClean.length < 10) return;
+      var sWords = tokenize(sClean);
+      var matchCount = 0;
+      qWords.forEach(function (qw) {
+        if (sWords.indexOf(qw) !== -1) matchCount++;
+      });
+      if (matchCount > bestScore) {
+        bestScore = matchCount;
+        bestSentence = sClean;
+      }
+    });
+
+    var chosen = (bestScore > 0 && bestSentence) ? bestSentence : (video.context || video.excerpt || video.title || "");
+    if (chosen.length > 125) {
+      chosen = chosen.slice(0, 125) + "\u2026";
+    }
+    return escapeHtml(chosen);
+  }
+
   /* ── Render results ── */
   function renderResults(results) {
     if (!results.length) {
@@ -586,6 +703,9 @@
       }
 
       var sourceBadge = r.source === "media_library" ? '<div class="vsc-source-badge">Media Library</div>' : '';
+      var topicBadge = r.topics ? '<div class="vsc-result-topics">🏷️ ' + escapeHtml(r.topics) + '</div>' : '';
+
+      var snippetHtml = r.snippet ? r.snippet : escapeHtml((r.excerpt || "").slice(0, 100)) + (r.excerpt && r.excerpt.length > 100 ? "\u2026" : "");
 
       card.innerHTML =
         '<div class="vsc-thumb-wrap">' +
@@ -599,7 +719,8 @@
         '</div>' +
         '<div class="vsc-result-info">' +
           '<div class="vsc-result-title">' + escapeHtml(r.title || "Untitled") + '</div>' +
-          '<div class="vsc-result-excerpt">' + escapeHtml((r.excerpt || "").slice(0, 100)) + (r.excerpt && r.excerpt.length > 100 ? "\u2026" : "") + '</div>' +
+          topicBadge +
+          '<div class="vsc-result-excerpt">' + snippetHtml + '</div>' +
         '</div>';
 
       card.addEventListener("click", function () { openModal(r); });
@@ -712,12 +833,34 @@
       .then(function (res) { return res.json(); })
       .catch(function () { return []; });
 
-    // 2. Fetch WordPress Media Library video catalog
-    var loadMedia = STATE.mediaVideosUrl
-      ? fetch(STATE.mediaVideosUrl)
-          .then(function (res) { return res.json(); })
-          .catch(function () { return []; })
-      : Promise.resolve([]);
+    // 2. Fetch WordPress Media Library video catalog (direct inline payload or AJAX / JSON fallback)
+    var loadMedia;
+    if (Array.isArray(cfg.mediaVideos) && cfg.mediaVideos.length > 0) {
+      loadMedia = Promise.resolve(cfg.mediaVideos);
+    } else {
+      var fetchUrl = STATE.mediaVideosUrl || (STATE.ajaxUrl ? STATE.ajaxUrl + "?action=vsc_get_media_videos" : "");
+      loadMedia = fetchUrl
+        ? fetch(fetchUrl)
+            .then(function (res) {
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              return res.json();
+            })
+            .then(function (data) {
+              if (Array.isArray(data)) return data;
+              if (data && data.success && data.data && Array.isArray(data.data.videos)) return data.data.videos;
+              return [];
+            })
+            .catch(function () {
+              if (STATE.ajaxUrl && fetchUrl !== (STATE.ajaxUrl + "?action=vsc_get_media_videos")) {
+                return fetch(STATE.ajaxUrl + "?action=vsc_get_media_videos")
+                  .then(function (r) { return r.json(); })
+                  .then(function (d) { return (d && d.success && d.data && Array.isArray(d.data.videos)) ? d.data.videos : []; })
+                  .catch(function () { return []; });
+              }
+              return [];
+            })
+        : Promise.resolve([]);
+    }
 
     // 3. Combine both catalogs into a unified knowledgebase
     Promise.all([loadDrive, loadMedia])
@@ -863,23 +1006,59 @@
     var thinking = showThinking();
     var minThink = new Promise(function (res) { setTimeout(res, 1800); });
 
-    STATE.extractor(query, { pooling: "mean", normalize: true })
+    // Ensure all videos in memory have embeddings before computing scores
+    var unindexed = STATE.videos.filter(function (v) {
+      return (!v.embedding || !v.embedding.length) && (v.title || v.context || v.excerpt);
+    });
+
+    var prepPromise = (unindexed.length > 0)
+      ? Promise.all(unindexed.map(function (uv) {
+          var txt = buildVideoTrainingText(uv);
+          return STATE.extractor(txt, { pooling: "mean", normalize: true }).then(function (res) {
+            uv.embedding = Array.from(res.data);
+          }).catch(function () {});
+        }))
+      : Promise.resolve();
+
+    prepPromise
+      .then(function () {
+        return STATE.extractor(query, { pooling: "mean", normalize: true });
+      })
       .then(function (output) {
         var queryVec = Array.from(output.data);
         var scored = [];
 
         for (var i = 0; i < STATE.videos.length; i++) {
           var v = STATE.videos[i];
-          if (!v.embedding || !v.embedding.length) continue;
+          var semanticSim = (v.embedding && v.embedding.length) ? cosineSim(queryVec, v.embedding) : 0;
+          var contextScore = calculateContextRelevance(query, v);
+
+          // Combined hybrid score: 65% semantic meaning + 35% contextual keyword alignment
+          var score = 0;
+          if (semanticSim > 0 && contextScore > 0) {
+            score = (semanticSim * 0.65) + (contextScore * 0.35);
+          } else if (semanticSim > 0) {
+            score = semanticSim;
+          } else if (contextScore > 0) {
+            score = contextScore * 0.75;
+          } else {
+            continue;
+          }
+
+          var snippet = extractContextSnippet(query, v);
+
           scored.push({
             id: v.id,
             wpId: v.wpId,
             title: v.title,
             excerpt: v.excerpt,
+            context: v.context,
+            topics: v.topics,
+            snippet: snippet,
             videoUrl: v.videoUrl,
             thumbUrl: v.thumbUrl,
             source: v.source,
-            score: cosineSim(queryVec, v.embedding),
+            score: score,
           });
         }
 
