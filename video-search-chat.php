@@ -1162,7 +1162,7 @@ function vsc_enqueue_assets($config = []) {
 function vsc_shortcode($atts) {
     $atts = shortcode_atts([
         'placeholder'         => 'Search videos... e.g. faith, forgiveness, prayer',
-        'results'             => 1,
+        'results'             => 3,
         'free_searches'       => 1,
         'member_searches'     => 10,
         'period_hours'        => 24,
